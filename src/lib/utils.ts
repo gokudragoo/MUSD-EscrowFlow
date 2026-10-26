@@ -17,9 +17,14 @@ export function shortHash(h?: string | null) {
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
-/** "in 3 days", "2 hours ago" from a unix-seconds or Date/ISO input. */
+function toMillis(at: number | string | Date): number {
+  return typeof at === "number" ? at * 1000 : new Date(at).getTime();
+}
+
+/** "in 3 days", "2 hours ago" from a unix-seconds or Date/ISO input. Invalid input → "unknown time". */
 export function relativeTime(at: number | string | Date, now = Date.now()) {
-  const t = typeof at === "number" ? at * 1000 : new Date(at).getTime();
+  const t = toMillis(at);
+  if (!Number.isFinite(t) || !Number.isFinite(now)) return "unknown time";
   const diff = (t - now) / 1000;
   const abs = Math.abs(diff);
   if (abs < 45) return diff >= 0 ? "in a few seconds" : "just now";
@@ -30,7 +35,8 @@ export function relativeTime(at: number | string | Date, now = Date.now()) {
 }
 
 export function formatDate(at: number | string | Date, withTime = false) {
-  const d = typeof at === "number" ? new Date(at * 1000) : new Date(at);
+  const d = new Date(toMillis(at));
+  if (Number.isNaN(d.getTime())) return "Unknown date";
   return d.toLocaleString("en-GB", {
     day: "numeric",
     month: "short",
