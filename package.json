@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "description": "MUSD EscrowFlow — milestone-based freelance escrow paid in MUSD on Mezo",
+  "homepage": "https://musd-escrowflow.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gokudragoo/MUSD-EscrowFlow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gokudragoo/MUSD-EscrowFlow/issues"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
