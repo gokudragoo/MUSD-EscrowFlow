@@ -1,0 +1,42 @@
+{
+  "baseUrl": "https://musd-escrowflow.vercel.app",
+  "ranAt": "2026-10-26T14:36:12.722Z",
+  "escrow": "0xC52C7d72aDeb81998A3eAB2d3a25634C43822fdE",
+  "projectA": {
+    "id": "0375c3cd-7442-433a-b15c-ec3a86f141e2",
+    "chainId": "0"
+  },
+  "passed": 5,
+  "failed": 0,
+  "results": [
+    {
+      "step": "SIWE sign-in as client",
+      "ok": true
+    },
+    {
+      "step": "deadline reclaim: 1 MUSD returned to the client for the undelivered milestone",
+      "ok": true
+    },
+    {
+      "step": "app verified MilestoneRefunded",
+      "ok": true,
+      "detail": "tx 0x6f15be3466…"
+    },
+    {
+      "step": "project B closed as Completed and reconciled",
+      "ok": true
+    },
+    {
+      "step": "client balance increased by exactly the reclaimed 1 MUSD",
+      "ok": true
+    }
+  ],
+  "transactions": [
+    {
+      "label": "B: reclaimExpiredMilestone M2",
+      "hash": "0x6f15be34666fcc609b07e90f227104f330cfbdd2c611be9c90f0ea12789834de",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x6f15be34666fcc609b07e90f227104f330cfbdd2c611be9c90f0ea12789834de"
+    }
+  ]
+}

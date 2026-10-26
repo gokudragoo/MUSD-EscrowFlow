@@ -1,0 +1,9 @@
+{
+  "chainId": 31611,
+  "escrowFlow": "0xC52C7d72aDeb81998A3eAB2d3a25634C43822fdE",
+  "deployTx": "0x9bdaf8c89ff30c3b32579d707cbe8126f9f98724ddfd678653a0384590c3dc6b",
+  "deployBlock": 16381473,
+  "deployer": "0x10ac9924a78051BdD770978740C5084205cdB628",
+  "deployedAt": "2026-10-26T13:04:33.023Z",
+  "gasUsed": "3800365"
+}

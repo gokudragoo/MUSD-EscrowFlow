@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+node_modules
+.next
+contracts/node_modules
+contracts/cache
+contracts/artifacts
+contracts/typechain-types
+contracts/coverage
+contracts/coverage.json
+*.key
+*.pem
+secret.tmp
+*.log
