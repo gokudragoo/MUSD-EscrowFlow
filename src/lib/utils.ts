@@ -48,12 +48,12 @@ export function formatDate(at: number | string | Date, withTime = false) {
 /** Human duration for review periods / grace periods (seconds). */
 export function formatDuration(seconds: number) {
   if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 86_400) {
-    const h = Math.round(seconds / 3600);
-    return `${h} hour${h === 1 ? "" : "s"}`;
-  }
-  const d = Math.round((seconds / 86_400) * 10) / 10;
+  // Round first, then pick the unit, so 3599s reads "1 hour" rather than "60 min".
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(seconds / 3600);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const d = Math.max(1, Math.round((seconds / 86_400) * 10) / 10);
   return `${d} day${d === 1 ? "" : "s"}`;
 }
 
