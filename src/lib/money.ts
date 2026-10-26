@@ -62,7 +62,9 @@ export function formatMusd(wei: bigint, opts: FormatOptions = {}): string {
   if (frac.length < minD) frac = frac.padEnd(minD, "0");
   const suffix = opts.symbol ? " MUSD" : "";
   if (whole === 0n && abs > 0n && /^0*$/.test(fracFull.slice(0, maxD))) {
-    return `${neg ? "-" : ""}<0.${"0".repeat(Math.max(0, maxD - 1))}1${suffix}`;
+    // Smallest displayable unit at this precision: "<1" for 0 decimals, "<0.01" for 2, etc.
+    const smallest = maxD === 0 ? "1" : `0.${"0".repeat(maxD - 1)}1`;
+    return `${neg ? "-" : ""}<${smallest}${suffix}`;
   }
   return `${neg ? "-" : ""}${groupThousands(whole)}${frac ? `.${frac}` : ""}${suffix}`;
 }

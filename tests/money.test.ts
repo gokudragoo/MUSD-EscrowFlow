@@ -52,6 +52,11 @@ describe("formatting", () => {
     expect(formatMusd(1n)).toBe("<0.01");
     expect(formatMusd(0n)).toBe("0.00");
   });
+  it("formatMusd scales the dust marker with the requested precision", () => {
+    expect(formatMusd(ONE_MUSD / 2n, { maxDecimals: 0 })).toBe("<1");
+    expect(formatMusd(1n, { maxDecimals: 4, symbol: true })).toBe("<0.0001 MUSD");
+    expect(formatMusd(-1n)).toBe("-<0.01");
+  });
 });
 
 describe("milestone sums", () => {
