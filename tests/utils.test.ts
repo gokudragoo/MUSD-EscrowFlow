@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatDuration, relativeTime } from "@/lib/utils";
+import { countdown, formatDate, formatDuration, relativeTime, shortAddress, shortHash } from "@/lib/utils";
+
+describe("identifier shortening", () => {
+  const addr = "0xA1640ea3e502FD0A0b41d248773C5B9928dB91CD";
+  it("shortAddress keeps the 0x prefix plus head and tail", () => {
+    expect(shortAddress(addr)).toBe("0xA164…91CD");
+    expect(shortAddress(addr, 6)).toBe("0xA1640e…dB91CD");
+    expect(shortAddress(null)).toBe("");
+    expect(shortAddress(undefined)).toBe("");
+  });
+  it("shortHash shows 10 + 6 characters", () => {
+    expect(shortHash("0x9bdaf8c89ff30c3b32579d707cbe8126f9f98724ddfd678653a0384590c3dc6b")).toBe("0x9bdaf8c8…c3dc6b");
+    expect(shortHash("")).toBe("");
+  });
+});
+
+describe("countdown", () => {
+  const now = 1_800_000_000;
+  it("switches units as the deadline approaches", () => {
+    expect(countdown(now + 2 * 86_400 + 3 * 3600, now)).toBe("2d 3h");
+    expect(countdown(now + 5 * 3600 + 20 * 60, now)).toBe("5h 20m");
+    expect(countdown(now + 90, now)).toBe("1m 30s");
+  });
+  it("never goes negative after the deadline", () => {
+    expect(countdown(now - 500, now)).toBe("0m 0s");
+  });
+});
 
 describe("date display helpers", () => {
   const now = Date.parse("2026-10-26T12:00:00Z");
