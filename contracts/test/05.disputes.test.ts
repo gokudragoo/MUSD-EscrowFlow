@@ -43,11 +43,15 @@ describe("EscrowFlow · dispute opening", () => {
     await assertInvariants(escrow, musd);
   });
 
-  it("freelancer can dispute Pending and ChangesRequested milestones; counter tracks multiple disputes", async () => {
+  it("freelancer can dispute a ChangesRequested milestone, client a Pending one; counter tracks multiple disputes", async () => {
     const { escrow, musd, client, freelancer, id } = await disputable();
     await escrow.connect(client).requestChanges(id, 1, REASON);
     await escrow.connect(freelancer).openDispute(id, 1, REASON);
-    await escrow.connect(freelancer).openDispute(id, 0, REASON);
+    await expect(escrow.connect(freelancer).openDispute(id, 0, REASON)).to.be.revertedWithCustomError(
+      escrow,
+      "NothingSubmitted",
+    );
+    await escrow.connect(client).openDispute(id, 0, REASON);
     expect((await escrow.getMilestone(id, 1)).statusBeforeDispute).to.equal(MS.ChangesRequested);
     expect((await escrow.getMilestone(id, 0)).statusBeforeDispute).to.equal(MS.Pending);
     expect((await escrow.getProject(id)).openDisputes).to.equal(2n);
@@ -100,7 +104,7 @@ describe("EscrowFlow · dispute restrictions (funds frozen)", () => {
     const { escrow, musd, client, freelancer, id } = await disputable();
     await escrow.connect(freelancer).openDispute(id, 1, REASON);
     await escrow.connect(freelancer).proposeCancellation(id);
-    await expect(escrow.connect(client).acceptCancellation(id)).to.changeTokenBalances(musd, [client], [E(140)]);
+    await expect(escrow.connect(client).acceptCancellation(id, E(140))).to.changeTokenBalances(musd, [client], [E(140)]);
     expect(await milestoneStatus(escrow, id, 1)).to.equal(MS.Disputed);
     expect(await escrow.heldAmount(id)).to.equal(E(60));
   });
@@ -202,7 +206,7 @@ describe("EscrowFlow · mutual settlement", () => {
     await escrow.connect(freelancer).proposeSettlement(id, 1, 0);
     const tx = escrow.connect(client).acceptSettlement(id, 1, 0);
     await expect(tx).to.changeTokenBalances(musd, [freelancer, client], [0n, E(60)]);
-    await escrow.connect(freelancer).openDispute(id, 0, REASON);
+    await escrow.connect(client).openDispute(id, 0, REASON);
     await escrow.connect(client).proposeSettlement(id, 0, E(40));
     await expect(escrow.connect(freelancer).acceptSettlement(id, 0, E(40))).to.changeTokenBalances(
       musd,
@@ -282,35 +286,47 @@ describe("EscrowFlow · dispute withdrawal", () => {
     }
   });
 
-  it("withdrawing restores Submitted with a fresh review window", async () => {
+  it("withdrawing restores Submitted and the review window resumes where it paused", async () => {
     const { escrow, musd, client, freelancer, id } = await disputable();
+    const submittedAt = (await escrow.getMilestone(id, 1)).submittedAt;
+    await time.increase(DAY);
     await escrow.connect(client).openDispute(id, 1, REASON);
+    const disputedAt = BigInt(await time.latest());
     await time.increase(10 * DAY);
-    await expect(escrow.connect(client).withdrawDispute(id, 1))
-      .to.emit(escrow, "DisputeWithdrawn")
-      .withArgs(id, 1n, client.address);
-    const now = BigInt(await time.latest());
+    const tx = await escrow.connect(client).withdrawDispute(id, 1);
+    const now = BigInt((await ethers.provider.getBlock(tx.blockNumber!))!.timestamp);
+    const paused = now - disputedAt;
+    await expect(tx).to.emit(escrow, "DisputeWithdrawn").withArgs(id, 1n, client.address, paused);
     const m = await escrow.getMilestone(id, 1);
     expect(m.status).to.equal(MS.Submitted);
-    expect(m.submittedAt).to.equal(now);
+    expect(m.submittedAt).to.equal(submittedAt + paused);
+    expect(m.pausedFor).to.equal(paused);
     expect(m.disputeInitiator).to.equal(ethers.ZeroAddress);
     expect((await escrow.getProject(id)).openDisputes).to.equal(0n);
-    // the claim clock restarted: not claimable yet
+    // the claim clock resumed with the ~2 days that were left when the dispute opened
+    const dueAt = submittedAt + paused + BigInt(3 * DAY);
+    expect(await escrow.reviewDeadline(id, 1)).to.equal(dueAt);
     await expect(escrow.connect(freelancer).claimAfterReviewTimeout(id, 1))
       .to.be.revertedWithCustomError(escrow, "ReviewWindowOpen")
-      .withArgs(now + BigInt(3 * DAY));
+      .withArgs(dueAt);
+    await time.setNextBlockTimestamp(dueAt);
+    await expect(escrow.connect(freelancer).claimAfterReviewTimeout(id, 1)).to.emit(escrow, "MilestoneReleased");
     await assertInvariants(escrow, musd);
   });
 
-  it("withdrawing restores ChangesRequested with a fresh changesRequestedAt", async () => {
+  it("withdrawing restores ChangesRequested with changesRequestedAt shifted by the paused time", async () => {
     const { escrow, client, freelancer, id } = await disputable();
     await escrow.connect(client).requestChanges(id, 1, REASON);
+    const changesAt = (await escrow.getMilestone(id, 1)).changesRequestedAt;
     await escrow.connect(freelancer).openDispute(id, 1, REASON);
+    const disputedAt = BigInt(await time.latest());
     await time.increase(DAY);
     await escrow.connect(freelancer).withdrawDispute(id, 1);
+    const paused = BigInt(await time.latest()) - disputedAt;
     const m = await escrow.getMilestone(id, 1);
     expect(m.status).to.equal(MS.ChangesRequested);
-    expect(m.changesRequestedAt).to.equal(BigInt(await time.latest()));
+    expect(m.changesRequestedAt).to.equal(changesAt + paused);
+    expect(m.pausedFor).to.equal(paused);
   });
 
   it("withdrawing restores Pending; a standing proposal does not survive a re-opened dispute", async () => {
@@ -319,7 +335,7 @@ describe("EscrowFlow · dispute withdrawal", () => {
     await escrow.connect(client).proposeSettlement(id, 0, E(1));
     await escrow.connect(client).withdrawDispute(id, 0);
     expect(await milestoneStatus(escrow, id, 0)).to.equal(MS.Pending);
-    await escrow.connect(freelancer).openDispute(id, 0, REASON);
+    await escrow.connect(client).openDispute(id, 0, REASON);
     await expect(escrow.connect(freelancer).acceptSettlement(id, 0, E(1))).to.be.revertedWithCustomError(
       escrow,
       "NoSettlementProposal",

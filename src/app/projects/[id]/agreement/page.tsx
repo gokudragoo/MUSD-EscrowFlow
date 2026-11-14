@@ -9,6 +9,7 @@ import { Notice, Panel, Skeleton } from "@/components/ui/primitives";
 import { TermsDocumentView } from "@/components/project/terms-document";
 import { useProject } from "@/hooks/useProject";
 import { compareTermsWithChain } from "@/lib/terms";
+import { chainSavingsTerms } from "@/lib/escrow-state";
 import { ESCROW_ADDRESS } from "@/config/contracts";
 import { explorerAddress } from "@/config/chains";
 
@@ -16,7 +17,7 @@ export default function AgreementPage({ params }: { params: Promise<{ id: string
   const { id } = use(params);
   const { view, chain, isLoading } = useProject(id);
   const terms = chain && view?.onchainTerms ? view.onchainTerms : view?.terms;
-  const check = chain && view?.onchainTerms ? compareTermsWithChain(view.onchainTerms, chain.project, chain.milestones) : null;
+  const check = chain && view?.onchainTerms ? compareTermsWithChain(view.onchainTerms, chain.project, chain.milestones, chainSavingsTerms(chain)) : null;
   return (
     <PageContainer className="max-w-4xl">
       <div className="no-print mb-6 flex flex-wrap items-center justify-between gap-3">

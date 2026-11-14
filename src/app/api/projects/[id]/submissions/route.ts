@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { getAddress } from "viem";
-import { badRequest, conflict, json, route } from "@/lib/server/http";
+import { badRequest, conflict, json, route, readForm } from "@/lib/server/http";
 import { requireSession } from "@/lib/server/auth";
 import { query } from "@/lib/server/db";
 import { requireProjectAccess } from "@/lib/server/projects";
@@ -15,7 +15,8 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 const fieldsSchema = z.object({
-  milestoneIndex: z.coerce.number().int().min(0).max(19),
+  // A missing field must not silently become milestone 0.
+  milestoneIndex: z.string().regex(/^\d{1,2}$/, "Choose a milestone").transform(Number).pipe(z.number().int().min(0).max(19)),
   description: z.string().trim().min(10, "Describe what you delivered (10+ characters)").max(5000),
   links: z
     .array(z.string().trim().url().max(500).refine((u) => /^https?:\/\//.test(u), "Links must start with https://"))
@@ -59,7 +60,7 @@ export const POST = route(async (req: NextRequest, ctx: Ctx) => {
   const { row, chain } = await requireProjectAccess(id, s.address, ["freelancer"]);
   if (!chain || chain.project.status !== ProjectStatus.Active) throw conflict("Work can be submitted once the escrow is funded");
   if (chain.project.freelancer !== s.address) throw badRequest("Only the escrow's freelancer can submit");
-  const form = await req.formData();
+  const form = await readForm(req);
   let links: unknown = [];
   try {
     links = JSON.parse(String(form.get("links") ?? "[]"));

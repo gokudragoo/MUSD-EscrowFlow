@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMounted } from "@/hooks/useClient";
 import Link from "next/link";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
@@ -131,7 +131,7 @@ export function ConnectButton({ className, size = "md" }: { className?: string; 
   const mounted = useMounted();
   const { address, isConnected, chainId } = useAccount();
   const { disconnect } = useDisconnect();
-  const { isSignedIn, signIn, signOut, signing, mismatch } = useSession();
+  const { isSignedIn, signIn, signOut, signing, mismatch, sessionAddress } = useSession();
   const { addMusd, addNetwork } = useWalletHelpers();
   const btc = useBalance({ address, chainId: SUPPORTED_CHAIN_ID, query: { enabled: !!address } });
   const musd = useReadContract({
@@ -162,7 +162,7 @@ export function ConnectButton({ className, size = "md" }: { className?: string; 
       )}
       <Dropdown.Root>
         <Dropdown.Trigger asChild>
-          <button className="flex h-9 items-center gap-2 rounded-[10px] border border-ink-600 bg-ink-800 px-3 text-[13px] text-mist-100 hover:border-ink-500">
+          <button className="flex h-9 items-center gap-2 rounded-[8px] border border-ink-600 bg-ink-800 px-3 text-[13px] text-mist-100 hover:border-ink-500">
             <span className={cn("size-2 rounded-full", chainId === SUPPORTED_CHAIN_ID ? "bg-paid-400" : "bg-warn-400")} aria-hidden />
             <span className="font-mono">{shortAddress(address)}</span>
             <ChevronDown className="size-3.5 text-mist-400" aria-hidden />
@@ -192,7 +192,8 @@ export function ConnectButton({ className, size = "md" }: { className?: string; 
             <Dropdown.Separator className="my-1 h-px bg-ink-700" />
             <MenuItem
               onSelect={async () => {
-                if (isSignedIn) await signOut();
+                // End the server session too, even if it belongs to a different wallet than the connected one.
+                if (sessionAddress) await signOut();
                 disconnect();
               }}
               icon={<LogOut className="size-4" />}
@@ -253,8 +254,11 @@ export function NetworkGuard() {
             onClick={async () => {
               try {
                 await switchChainAsync({ chainId: SUPPORTED_CHAIN_ID });
-              } catch {
-                await addNetwork();
+              } catch (e) {
+                // Only offer to add the network when the wallet does not know it (EIP-3085 code 4902),
+                // not when the user just declined the switch.
+                const code = (e as { code?: number; cause?: { code?: number } })?.cause?.code ?? (e as { code?: number })?.code;
+                if (code === 4902 || /unrecognized|not been added|unknown chain/i.test(String((e as Error)?.message))) await addNetwork();
               }
             }}
           >
@@ -282,4 +286,25 @@ export function BalanceLine() {
   const b = useMusdBalance();
   if (b.data === undefined) return null;
   return <Amount wei={b.data} />;
+}
+
+/**
+ * The session follows the wallet: if the connected account changes to a different address than the
+ * signed-in one, the old session is ended immediately so nothing is shown or posted as the previous
+ * wallet. The header then offers "Sign in" for the new account.
+ */
+export function SessionGuard() {
+  const { address } = useAccount();
+  const { mismatch, sessionAddress, signOut } = useSession();
+  const mounted = useMounted();
+  useEffect(() => {
+    if (!mounted || !mismatch || !sessionAddress) return;
+    const previous = sessionAddress;
+    void signOut().then(() =>
+      toast.message("Wallet switched", {
+        description: `Signed out of ${shortAddress(previous)}. Sign in to continue as ${address ? shortAddress(address) : "the new wallet"}.`,
+      }),
+    );
+  }, [mounted, mismatch, sessionAddress, address, signOut]);
+  return null;
 }

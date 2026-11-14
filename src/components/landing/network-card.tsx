@@ -12,7 +12,7 @@ export function NetworkCard() {
   return (
     <div className="panel-raised grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.1fr_1fr]">
       <div>
-        <h2 className="text-[24px] font-semibold tracking-[-0.01em] text-white">Supported network</h2>
+        <h2 className="display text-[26px] text-white">Supported network</h2>
         <p className="mt-2 max-w-lg text-[15px] leading-relaxed text-mist-300">
           EscrowFlow runs on Mezo Testnet, a Bitcoin-backed EVM chain. Gas is paid in testnet BTC; payments are in MUSD, Mezo&apos;s Bitcoin-backed dollar.
         </p>

@@ -7,6 +7,7 @@ import {
   createProject,
   acceptCurrent,
   activeProject,
+  lastId,
   assertInvariants,
   milestoneStatus,
   MS,
@@ -93,7 +94,7 @@ describe("EscrowFlow · failed token transfers", () => {
       escrow,
       "SafeERC20FailedOperation",
     );
-    await expect(escrow.connect(client).acceptCancellation(id)).to.be.revertedWithCustomError(
+    await expect(escrow.connect(client).acceptCancellation(id, E(140))).to.be.revertedWithCustomError(
       escrow,
       "SafeERC20FailedOperation",
     );
@@ -144,7 +145,7 @@ describe("EscrowFlow · reentrancy", () => {
     const proxyAddr = await proxy.getAddress();
     const params = await makeParams({ freelancer: freelancer.address });
     await proxy.exec(escrowAddr, enc(escrow, "createProject", [params]));
-    const id = await escrow.projectCount();
+    const id = await lastId(escrow);
     expect((await escrow.getProject(id)).client).to.equal(proxyAddr);
     await acceptCurrent(escrow, freelancer, id);
     await proxy.exec(escrowAddr, enc(escrow, "fund", [id]));
@@ -199,14 +200,14 @@ describe("EscrowFlow · reentrancy", () => {
     const { escrow, token, freelancer, proxy, escrowAddr } = await reentrantSetup();
     const proxyAddr = await proxy.getAddress();
     await proxy.exec(escrowAddr, enc(escrow, "createProject", [await makeParams({ freelancer: freelancer.address })]));
-    const id = await escrow.projectCount();
+    const id = await lastId(escrow);
     await acceptCurrent(escrow, freelancer, id);
     await proxy.exec(escrowAddr, enc(escrow, "fund", [id]));
     await escrow.connect(freelancer).proposeCancellation(id);
 
-    await proxy.setHook(escrowAddr, enc(escrow, "acceptCancellation", [id]));
+    await proxy.setHook(escrowAddr, enc(escrow, "acceptCancellation", [id, E(200)]));
     await token.arm(proxyAddr, proxy.interface.encodeFunctionData("hook"));
-    await expect(proxy.exec(escrowAddr, enc(escrow, "acceptCancellation", [id]))).to.changeTokenBalances(
+    await expect(proxy.exec(escrowAddr, enc(escrow, "acceptCancellation", [id, E(200)]))).to.changeTokenBalances(
       token,
       [proxy, escrow],
       [E(200), -E(200)],
@@ -221,7 +222,7 @@ describe("EscrowFlow · reentrancy", () => {
     const { escrow, token, freelancer, proxy, escrowAddr } = await reentrantSetup();
     const proxyAddr = await proxy.getAddress();
     await proxy.exec(escrowAddr, enc(escrow, "createProject", [await makeParams({ freelancer: freelancer.address })]));
-    const id = await escrow.projectCount();
+    const id = await lastId(escrow);
     await acceptCurrent(escrow, freelancer, id);
     await proxy.setHook(escrowAddr, enc(escrow, "fund", [id]));
     await token.arm(proxyAddr, proxy.interface.encodeFunctionData("hook"));

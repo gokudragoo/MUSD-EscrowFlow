@@ -2,17 +2,19 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAccount } from "wagmi";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
-import { AlertTriangle, CalendarPlus, Clock, ExternalLink, Lock, Pencil, Printer, QrCode, Users } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Clock, ExternalLink, History, Lock, Pencil, Printer, QrCode, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge, EmptyState, Field, Input, Notice, PageHeader, Panel, PanelHeader, Skeleton, Textarea } from "@/components/ui/primitives";
 import { Dialog, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/overlays";
 import { AddressChip, Amount, HashText, TxLink } from "@/components/ui/chain";
 import { EscrowBar, KeyValue, LedgerSummary, MilestonePill, ProjectStatusPill, Timeline } from "@/components/escrow/escrow-ui";
-import { AcceptTermsPanel, CancellationPanel, CommitTermsButton, CreateEscrowButton, MilestoneActionBar, SimpleTxButton } from "./actions";
+import { AcceptTermsPanel, CancellationPanel, CommitTermsButton, CreateEscrowButton, MilestoneActionBar, SavingsPanel, SimpleTxButton } from "./actions";
+import { SignInInline } from "@/components/layout/gate";
 import { TermsDocumentView } from "./terms-document";
 import { useProject } from "@/hooks/useProject";
 import { useSession } from "@/hooks/useSession";
@@ -23,19 +25,26 @@ import {
   PROJECT_STATUS_LABEL,
   ProjectStatus,
   deadlineState,
+  effectiveDeadline,
   milestoneDisplay,
   projectActions,
   reviewDeadlineOf,
 } from "@/lib/escrow-state";
-import { ESCROW_ADDRESS } from "@/config/contracts";
 import { explorerAddress } from "@/config/chains";
 import { countdown, formatDate, formatDuration } from "@/lib/utils";
 import { formatMusd } from "@/lib/money";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
+const TABS = ["milestones", "terms", "activity", "applications"] as const;
+
 export function ProjectView({ id }: { id: string }) {
   const { address } = useAccount();
+  const { isSignedIn } = useSession();
+  const search = useSearchParams();
+  const requestedTab = search.get("tab");
+  const [tab, setTab] = useState<string>(TABS.includes(requestedTab as (typeof TABS)[number]) ? requestedTab! : "milestones");
+  const [inviteOpen, setInviteOpen] = useState(false);
   const { view, chain, isLoading, error } = useProject(id);
   if (isLoading) return <ProjectSkeleton />;
   if (error) return <Notice tone="danger" title="Could not load this project">{(error as Error).message}</Notice>;
@@ -45,9 +54,22 @@ export function ProjectView({ id }: { id: string }) {
       <Panel>
         <EmptyState
           icon={<Lock className="size-5" />}
-          title="This project is private"
-          description="Only the client, the freelancer and the agreed arbiter can see its terms and history. Sign in with a participating wallet to view it."
-          action={chain ? <Link href={`/escrow/${chain.id}`}><Button variant="outline">View public on-chain facts</Button></Link> : undefined}
+          title={isSignedIn ? "This project is private" : "Sign in to open this project"}
+          description={
+            isSignedIn
+              ? "Only the client, the freelancer and the agreed arbiter can see its terms and history. You are signed in with a wallet that is not part of it."
+              : "If you were invited, connect the wallet named in the agreement and sign in. Only the client, the freelancer and the arbiter can see the terms."
+          }
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              {!isSignedIn && <SignInInline />}
+              {chain && (
+                <Link href={`/escrow/${chain.id}`}>
+                  <Button variant="outline">View public on-chain facts</Button>
+                </Link>
+              )}
+            </div>
+          }
         />
       </Panel>
     );
@@ -97,14 +119,20 @@ export function ProjectView({ id }: { id: string }) {
                 </a>
               </>
             )}
-            {isClient && <InviteButton id={id} />}
+            {isClient && <InviteButton id={id} open={inviteOpen} onOpenChange={setInviteOpen} />}
           </>
         }
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-6">
-          <NextStep view={view} chain={chain} />
+          {chain?.version === 1 && (
+            <Notice icon={<History className="size-4" />} title="Legacy escrow (EscrowFlow v1)">
+              This escrow lives on the first EscrowFlow contract. Its history and balances stay verifiable; new escrows use v2, which adds sMUSD savings and
+              stricter dispute rules.
+            </Notice>
+          )}
+          <NextStep view={view} chain={chain} onCreated={() => setInviteOpen(true)} />
 
           <Panel>
             <PanelHeader title="Escrow" description={funded ? "Live balances read from the EscrowFlow contract." : "Nothing is locked until the client funds the escrow."} />
@@ -120,7 +148,16 @@ export function ProjectView({ id }: { id: string }) {
             </div>
           </Panel>
 
-          <Tabs defaultValue="milestones">
+          {chain?.yield?.enabled && (
+            <Panel>
+              <PanelHeader title="sMUSD savings" description="Held MUSD sits in Mezo's MUSDSavingsRate vault while work is in progress." />
+              <div className="p-5">
+                <SavingsPanel chain={chain} who={address} />
+              </div>
+            </Panel>
+          )}
+
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value="milestones">Milestones</TabsTrigger>
               <TabsTrigger value="terms">Terms</TabsTrigger>
@@ -132,9 +169,12 @@ export function ProjectView({ id }: { id: string }) {
             </TabsContent>
             <TabsContent value="terms" className="pt-4">
               {terms ? (
-                <Panel className="p-5 sm:p-7">
-                  <TermsDocumentView terms={chain && view.onchainTerms ? view.onchainTerms : terms} termsHash={chain?.project.termsHash ?? view.termsHash} version={chain?.project.termsVersion} />
-                </Panel>
+                <div className="space-y-4">
+                  <Panel className="p-5 sm:p-7">
+                    <TermsDocumentView terms={chain && view.onchainTerms ? view.onchainTerms : terms} termsHash={chain?.project.termsHash ?? view.termsHash} version={chain?.project.termsVersion} />
+                  </Panel>
+                  {view.revisions && view.revisions.length > 0 && <RevisionHistory revisions={view.revisions} committed={chain?.project.termsHash ?? null} />}
+                </div>
               ) : (
                 <Notice>Terms are visible to participants only.</Notice>
               )}
@@ -175,6 +215,17 @@ export function ProjectView({ id }: { id: string }) {
               <KeyValue label="Client deadline reclaim">
                 {(chain?.project.deadlineReclaim ?? terms?.rules.deadlineReclaim) ? `Yes, after ${formatDuration(chain?.project.reclaimGracePeriod ?? terms?.rules.reclaimGracePeriodSeconds ?? 0)} grace` : "No"}
               </KeyValue>
+              <KeyValue label="sMUSD savings">
+                {chain?.version === 2
+                  ? chain.yield?.enabled
+                    ? `On, ${chain.yield.freelancerBps / 100}% of yield to freelancer`
+                    : "Off"
+                  : terms?.rules.savings?.enabled
+                    ? `On, ${terms.rules.savings.freelancerShareBps / 100}% of yield to freelancer`
+                    : chain
+                      ? "Not available (v1)"
+                      : "Off"}
+              </KeyValue>
               <KeyValue label="Platform fee">None</KeyValue>
               <KeyValue label="Category">{view.project.category}</KeyValue>
             </dl>
@@ -183,8 +234,8 @@ export function ProjectView({ id }: { id: string }) {
             <PanelHeader title="On-chain references" />
             <dl className="divide-y divide-ink-700 px-5 text-[13.5px]">
               <KeyValue label="Contract">
-                <a className="inline-flex items-center gap-1 text-signal-300 hover:underline" href={explorerAddress(ESCROW_ADDRESS)} target="_blank" rel="noopener noreferrer">
-                  EscrowFlow <ExternalLink className="size-3" />
+                <a className="inline-flex items-center gap-1 text-signal-300 hover:underline" href={explorerAddress(chain?.escrow ?? "")} target="_blank" rel="noopener noreferrer">
+                  EscrowFlow {chain?.version === 1 ? "v1" : "v2"} <ExternalLink className="size-3" />
                 </a>
               </KeyValue>
               <KeyValue label="Escrow id">{chain ? `#${chain.id}` : "—"}</KeyValue>
@@ -231,7 +282,7 @@ function PartyLink({ address, me }: { address: string; me?: string }) {
 }
 
 /** One prominent, role-aware "what happens next" card. */
-function NextStep({ view, chain }: { view: ProjectViewJson; chain: ChainView | null }) {
+function NextStep({ view, chain, onCreated }: { view: ProjectViewJson; chain: ChainView | null; onCreated?: () => void }) {
   const { address } = useAccount();
   const { isSignedIn } = useSession();
   const id = view.project.id;
@@ -249,7 +300,7 @@ function NextStep({ view, chain }: { view: ProjectViewJson; chain: ChainView | n
       } else {
         title = "Create the escrow on-chain";
         body = "This records the milestone amounts, deadlines, review periods, rules and the terms hash in the EscrowFlow contract. No funds move yet; the freelancer must accept first.";
-        action = isSignedIn ? <CreateEscrowButton view={view} /> : null;
+        action = isSignedIn ? <CreateEscrowButton view={view} onDone={onCreated} /> : null;
       }
     } else if (view.project.listingStatus === "open") {
       title = access === "applicant" ? "Application sent" : "Apply to this project";
@@ -293,6 +344,16 @@ function NextStep({ view, chain }: { view: ProjectViewJson; chain: ChainView | n
         title = "Funding blocked";
         body = pa.fund.reason;
         tone = "warning";
+        action = (
+          <div className="flex flex-wrap gap-2">
+            {pa.editTerms.available && (
+              <Link href={`/projects/${id}/edit`}>
+                <Button variant="secondary">Edit the terms</Button>
+              </Link>
+            )}
+            <SimpleTxButton label="Cancel project" fn="cancelUnfunded" args={[BigInt(chain.id)]} variant="outline" confirmTitle="Cancel this unfunded project?" confirmBody="No funds are involved. The escrow will be marked cancelled permanently." />
+          </div>
+        );
       } else {
         title = "Waiting for the client to fund";
         body = "You accepted the terms. Work should start once the escrow shows as funded — the app checks the contract, not a screenshot.";
@@ -304,7 +365,7 @@ function NextStep({ view, chain }: { view: ProjectViewJson; chain: ChainView | n
       title = p.cancelled ? "Cancelled — resolving remaining disputes" : "Escrow funded and active";
       body = (
         <>
-          <Amount wei={chain.ledger.held} className="text-white" /> is held by the contract.{" "}
+          <Amount wei={chain.ledger.held} className="text-white" /> is held by the contract{chain.yield?.enabled ? ", earning the sMUSD savings rate" : ""}.{" "}
           {submitted > 0 && `${submitted} milestone${submitted > 1 ? "s" : ""} awaiting review. `}
           {disputed > 0 && `${disputed} open dispute${disputed > 1 ? "s" : ""}.`}
         </>
@@ -320,10 +381,9 @@ function NextStep({ view, chain }: { view: ProjectViewJson; chain: ChainView | n
   }
   if (!title) return null;
   return (
-    <Panel raised className={tone === "warning" ? "border-warn-400/40" : "border-signal-400/30"}>
-      <div className="space-y-3 p-5 sm:p-6">
-        <div className="text-[12.5px] font-medium text-signal-300">Next step</div>
-        <h2 className="text-[19px] font-semibold text-white">{title}</h2>
+    <Panel className={tone === "warning" ? "border-warn-400/45" : "border-ink-600"}>
+      <div className="space-y-3 border-l-2 border-signal-500 p-5 sm:p-6">
+        <h2 className="display text-[21px] text-white">{title}</h2>
         {body && <div className="max-w-2xl text-[14px] leading-relaxed text-mist-300">{body}</div>}
         {action && <div className="pt-1">{action}</div>}
       </div>
@@ -341,7 +401,7 @@ function MilestoneList({ view, chain, who }: { view: ProjectViewJson; chain: Cha
         const t = terms?.milestones[i];
         const m = chain?.milestones[i];
         const display = milestoneDisplay(chain?.project ?? null, m ?? null);
-        const deadline = m ? Number(m.deadline) : (t?.deadline ?? 0);
+        const deadline = m ? effectiveDeadline(m) : (t?.deadline ?? 0);
         const ds = m ? deadlineState(m, now) : "none";
         return (
           <li key={i}>
@@ -389,8 +449,7 @@ function MilestoneList({ view, chain, who }: { view: ProjectViewJson; chain: Cha
   );
 }
 
-function InviteButton({ id }: { id: string }) {
-  const [open, setOpen] = useState(false);
+function InviteButton({ id, open, onOpenChange: setOpen }: { id: string; open: boolean; onOpenChange: (o: boolean) => void }) {
   const url = typeof window !== "undefined" ? `${window.location.origin}/projects/${id}` : "";
   return (
     <>
@@ -421,11 +480,11 @@ function InviteButton({ id }: { id: string }) {
 }
 
 function ApplyForm({ id }: { id: string }) {
-  const { isSignedIn, signIn } = useSession();
+  const { isSignedIn } = useSession();
   const qc = useQueryClient();
   const [f, setF] = useState({ introduction: "", proposedTimeline: "", portfolio: "", skills: "" });
   const [busy, setBusy] = useState(false);
-  if (!isSignedIn) return <Button onClick={() => signIn()}>Sign in to apply</Button>;
+  if (!isSignedIn) return <SignInInline label="Sign in to apply" />;
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="sm:col-span-2">
@@ -560,7 +619,7 @@ function ReviewForm({ id }: { id: string }) {
   return (
     <div className="flex flex-wrap items-end gap-2">
       <Field label="Rate the other party" htmlFor="rating">
-        <select id="rating" value={rating} onChange={(e) => setRating(Number(e.target.value))} className="h-10 rounded-[10px] border border-ink-600 bg-ink-950/60 px-3 text-[14px]">
+        <select id="rating" value={rating} onChange={(e) => setRating(Number(e.target.value))} className="h-10 rounded-[8px] border border-ink-600 bg-ink-950/60 px-3 text-[14px]">
           {[5, 4, 3, 2, 1].map((r) => (
             <option key={r} value={r}>
               {r} / 5
@@ -580,7 +639,9 @@ function ReviewForm({ id }: { id: string }) {
             await api(`/api/projects/${id}/reviews`, { method: "POST", json: { rating, body } });
             setDone(true);
           } catch (e) {
-            toast.error("Could not save review", { description: e instanceof Error ? e.message : String(e) });
+            const msg = e instanceof Error ? e.message : String(e);
+            if (/already/i.test(msg)) setDone(true);
+            else toast.error("Could not save review", { description: msg });
           }
         }}
       >
@@ -601,4 +662,39 @@ function ProjectSkeleton() {
   );
 }
 
-
+function RevisionHistory({ revisions, committed }: { revisions: NonNullable<ProjectViewJson["revisions"]>; committed: string | null }) {
+  return (
+    <Panel>
+      <PanelHeader title="Terms history" description="Every saved version of the agreement. Revisions are append-only; the highlighted one is committed on-chain." />
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[13px]">
+          <thead className="text-[12px] text-mist-400">
+            <tr className="border-b border-ink-700">
+              <th className="px-5 py-2.5 font-medium">Version</th>
+              <th className="px-5 py-2.5 font-medium">Saved</th>
+              <th className="px-5 py-2.5 font-medium">Terms hash</th>
+              <th className="px-5 py-2.5 font-medium">Note</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-700">
+            {revisions.map((r) => {
+              const isCommitted = !!committed && r.terms_hash.toLowerCase() === committed.toLowerCase();
+              return (
+                <tr key={r.revision} className={isCommitted ? "bg-signal-500/[0.06]" : undefined}>
+                  <td className="px-5 py-2.5 text-mist-100">
+                    r{r.revision} {isCommitted && <Badge tone="signal" className="ml-1">On-chain</Badge>}
+                  </td>
+                  <td className="px-5 py-2.5 text-mist-300">{formatDate(r.created_at, true)}</td>
+                  <td className="px-5 py-2.5">
+                    <HashText value={r.terms_hash} />
+                  </td>
+                  <td className="px-5 py-2.5 text-mist-400">{r.note || "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}

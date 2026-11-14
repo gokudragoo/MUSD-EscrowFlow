@@ -1,4 +1,4 @@
-import { json, route, badRequest } from "@/lib/server/http";
+import { json, route, badRequest, readForm } from "@/lib/server/http";
 import { requireSession } from "@/lib/server/auth";
 import { query } from "@/lib/server/db";
 import { AVATAR_MAX_BYTES, sniffMime } from "@/lib/validation";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export const POST = route(async (req) => {
   const s = await requireSession();
-  const form = await req.formData();
+  const form = await readForm(req, 600_000);
   const file = form.get("file");
   if (!(file instanceof File)) throw badRequest("Attach an image file");
   if (file.size > AVATAR_MAX_BYTES) throw badRequest("Profile images must be 512 KB or smaller");

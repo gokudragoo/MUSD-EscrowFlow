@@ -243,7 +243,7 @@ describe("EscrowFlow · unauthorized release attempts", () => {
     }
     await escrow.connect(client).proposeCancellation(id);
     for (const s of [stranger, arbiter]) {
-      await expect(escrow.connect(s).acceptCancellation(id)).to.be.revertedWithCustomError(escrow, "NotParty");
+      await expect(escrow.connect(s).acceptCancellation(id, E(200))).to.be.revertedWithCustomError(escrow, "NotParty");
       await expect(escrow.connect(s).revokeCancellation(id)).to.be.revertedWithCustomError(escrow, "NotParty");
     }
     await expect(escrow.connect(stranger).withdrawDispute(id, 0)).to.be.revertedWithCustomError(escrow, "NotDisputeInitiator");

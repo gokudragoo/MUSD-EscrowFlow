@@ -24,5 +24,9 @@ export const GET = route(async () => {
       where recipient = $1 order by created_at desc limit 100`,
     [s.address.toLowerCase()],
   );
-  return json({ notifications: rows, unread: rows.filter((r) => !r.read_at).length });
+  const [{ unread }] = await query<{ unread: number }>(
+    `select count(*)::int as unread from escrowflow.notifications where recipient = $1 and read_at is null`,
+    [s.address.toLowerCase()],
+  );
+  return json({ notifications: rows, unread });
 });

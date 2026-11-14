@@ -31,7 +31,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
       .to.emit(escrow, "CancellationProposed")
       .withArgs(id, client.address);
     expect((await escrow.getProject(id)).cancelProposer).to.equal(client.address);
-    const tx = escrow.connect(freelancer).acceptCancellation(id);
+    const tx = escrow.connect(freelancer).acceptCancellation(id, E(200));
     await expect(tx).to.emit(escrow, "ProjectCancelled").withArgs(id, freelancer.address, E(200), true);
     await expect(tx).to.emit(escrow, "ProjectClosed").withArgs(id, PS.Cancelled);
     for (let i = 0; i < 4; i++) {
@@ -51,7 +51,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
   it("freelancer can propose and the client accept", async () => {
     const { escrow, musd, client, freelancer, id } = await funded();
     await escrow.connect(freelancer).proposeCancellation(id);
-    await expect(escrow.connect(client).acceptCancellation(id)).to.changeTokenBalances(musd, [client], [E(200)]);
+    await expect(escrow.connect(client).acceptCancellation(id, E(200))).to.changeTokenBalances(musd, [client], [E(200)]);
   });
 
   it("refunds only Pending / Submitted / ChangesRequested; released funds stay with the freelancer", async () => {
@@ -63,7 +63,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
     await escrow.connect(client).requestChanges(id, 2, REASON); // M3 changes requested (60), M4 pending (40)
 
     await escrow.connect(freelancer).proposeCancellation(id);
-    const tx = escrow.connect(client).acceptCancellation(id);
+    const tx = escrow.connect(client).acceptCancellation(id, E(160));
     await expect(tx).to.changeTokenBalances(musd, [client, freelancer, escrow], [E(160), 0n, -E(160)]);
     await expect(tx).to.emit(escrow, "ProjectCancelled").withArgs(id, client.address, E(160), true);
     await expect(tx).to.not.emit(escrow, "MilestoneReleased");
@@ -78,11 +78,11 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
 
   it("cannot accept your own proposal; cannot accept without a proposal", async () => {
     const { escrow, client, freelancer, id } = await funded();
-    await expect(escrow.connect(client).acceptCancellation(id)).to.be.revertedWithCustomError(escrow, "NoCancellationProposal");
+    await expect(escrow.connect(client).acceptCancellation(id, E(200))).to.be.revertedWithCustomError(escrow, "NoCancellationProposal");
     await escrow.connect(client).proposeCancellation(id);
-    await expect(escrow.connect(client).acceptCancellation(id)).to.be.revertedWithCustomError(escrow, "CannotAcceptOwnProposal");
+    await expect(escrow.connect(client).acceptCancellation(id, E(200))).to.be.revertedWithCustomError(escrow, "CannotAcceptOwnProposal");
     await escrow.connect(freelancer).proposeCancellation(id); // counter-propose overwrites proposer
-    await expect(escrow.connect(freelancer).acceptCancellation(id)).to.be.revertedWithCustomError(
+    await expect(escrow.connect(freelancer).acceptCancellation(id, E(200))).to.be.revertedWithCustomError(
       escrow,
       "CannotAcceptOwnProposal",
     );
@@ -96,7 +96,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
     await expect(escrow.connect(client).revokeCancellation(id))
       .to.emit(escrow, "CancellationRevoked")
       .withArgs(id, client.address);
-    await expect(escrow.connect(freelancer).acceptCancellation(id)).to.be.revertedWithCustomError(
+    await expect(escrow.connect(freelancer).acceptCancellation(id, E(200))).to.be.revertedWithCustomError(
       escrow,
       "NoCancellationProposal",
     );
@@ -109,7 +109,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
       .to.emit(escrow, "CancellationRevoked")
       .withArgs(id, client.address);
     expect((await escrow.getProject(id)).cancelProposer).to.equal(ethers.ZeroAddress);
-    await expect(escrow.connect(freelancer).acceptCancellation(id)).to.be.revertedWithCustomError(
+    await expect(escrow.connect(freelancer).acceptCancellation(id, E(160))).to.be.revertedWithCustomError(
       escrow,
       "NoCancellationProposal",
     );
@@ -131,7 +131,7 @@ describe("EscrowFlow · mutual cancellation (funded project)", () => {
       await escrow.connect(freelancer).submitMilestone(id, 1, SUB(2));
       await escrow.connect(client).openDispute(id, 1, REASON); // M2 (60) disputed
       await escrow.connect(client).proposeCancellation(id);
-      await escrow.connect(freelancer).acceptCancellation(id);
+      await escrow.connect(freelancer).acceptCancellation(id, E(140));
       return ctx;
     }
 
@@ -247,7 +247,7 @@ describe("EscrowFlow · deadline reclaim (refund rules)", () => {
     const { escrow, client, freelancer, id } = await reclaimable();
     await escrow.connect(freelancer).submitMilestone(id, 0, SUB());
     await escrow.connect(client).approveAndRelease(id, 0);
-    await escrow.connect(freelancer).openDispute(id, 1, REASON);
+    await escrow.connect(client).openDispute(id, 1, REASON);
     await time.increase(365 * DAY);
     await expect(escrow.connect(client).reclaimExpiredMilestone(id, 0))
       .to.be.revertedWithCustomError(escrow, "InvalidMilestoneStatus")
@@ -292,9 +292,12 @@ describe("EscrowFlow · deadline reclaim (refund rules)", () => {
     await expect(escrow.connect(client).reclaimExpiredMilestone(id, 0)).to.emit(escrow, "MilestoneRefunded");
   });
 
-  it("grace 0 allows reclaim one second after the deadline", async () => {
-    const { escrow, client, id, deadline0 } = await reclaimable(0);
-    await time.increaseTo(deadline0 + 1n);
+  it("the minimum grace (60 s) allows reclaim one second after deadline + 60 s", async () => {
+    const { escrow, client, id, deadline0 } = await reclaimable(60);
+    await time.setNextBlockTimestamp(deadline0 + 60n);
+    await expect(escrow.connect(client).reclaimExpiredMilestone(id, 0))
+      .to.be.revertedWithCustomError(escrow, "ReclaimNotYetAvailable")
+      .withArgs(deadline0 + 60n);
     await expect(escrow.connect(client).reclaimExpiredMilestone(id, 0)).to.emit(escrow, "MilestoneRefunded");
   });
 
@@ -341,11 +344,13 @@ describe("EscrowFlow · fund-safety guarantees", () => {
         amounts: [1n],
         deadlines: [BigInt(await time.latest()) + 1000n],
         reviewPeriods: [60],
+        yieldEnabled: false,
+        freelancerYieldBps: 0,
       }),
     ).to.be.revertedWithCustomError(escrow, "InvalidProjectStatus");
     // Mutual cancellation (even if the freelancer agreed) refunds only the unreleased milestones.
     await escrow.connect(client).proposeCancellation(id);
-    await expect(escrow.connect(freelancer).acceptCancellation(id)).to.changeTokenBalances(musd, [client], [E(160)]);
+    await expect(escrow.connect(freelancer).acceptCancellation(id, E(160))).to.changeTokenBalances(musd, [client], [E(160)]);
     expect(await musd.balanceOf(freelancer.address)).to.equal(freelancerBal);
     expect((await escrow.getProject(id)).releasedAmount).to.equal(E(40));
     await assertInvariants(escrow, musd);
@@ -366,15 +371,18 @@ describe("EscrowFlow · fund-safety guarantees", () => {
     await expect(f.reclaimExpiredMilestone(id, 0)).to.be.revertedWithCustomError(escrow, "NotClient");
     await expect(f.acceptSettlement(id, 0, E(40))).to.be.revertedWithCustomError(escrow, "InvalidMilestoneStatus");
     await expect(f.arbiterResolve(id, 0, E(40))).to.be.revertedWithCustomError(escrow, "NotArbiter");
-    await expect(f.acceptCancellation(id)).to.be.revertedWithCustomError(escrow, "NoCancellationProposal");
+    await expect(f.acceptCancellation(id, E(200))).to.be.revertedWithCustomError(escrow, "NoCancellationProposal");
     await expect(f.fund(id)).to.be.revertedWithCustomError(escrow, "NotClient");
-    // self-dispute + self-settlement is impossible
+    // a never-submitted milestone cannot be disputed by the freelancer at all
+    await expect(f.openDispute(id, 0, REASON)).to.be.revertedWithCustomError(escrow, "NothingSubmitted");
+    // self-dispute + self-settlement of submitted work is impossible
+    await f.submitMilestone(id, 0, SUB());
     await f.openDispute(id, 0, REASON);
     await f.proposeSettlement(id, 0, E(40));
     await expect(f.acceptSettlement(id, 0, E(40))).to.be.revertedWithCustomError(escrow, "CannotAcceptOwnProposal");
     // self-proposed cancellation cannot be self-accepted (and would refund the client anyway)
     await f.proposeCancellation(id);
-    await expect(f.acceptCancellation(id)).to.be.revertedWithCustomError(escrow, "CannotAcceptOwnProposal");
+    await expect(f.acceptCancellation(id, E(160))).to.be.revertedWithCustomError(escrow, "CannotAcceptOwnProposal");
     expect(await musd.balanceOf(freelancer.address)).to.equal(before);
     expect(await escrow.heldAmount(id)).to.equal(E(200));
     await assertInvariants(escrow, musd);

@@ -8,6 +8,9 @@
  * approve + release 40 → dashboard 40 released / 160 held → history → stranger release reverts.
  * Plus: dispute + mutual split on M2, mutual cancellation refunding M3+M4, and a second project that
  * exercises auto-release after review timeout and deadline reclaim.
+ * EscrowFlow v2: project A keeps its held budget in Mezo's sMUSD vault (MUSDSavingsRate, 50/50 yield
+ * split) and the run proves the audit fixes live (dispute withdrawal clears a pending cancellation,
+ * exact-refund cancellation, no freelancer dispute on undelivered work, minimum reclaim grace).
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +25,7 @@ import {
 } from "viem";
 import { createSiweMessage } from "viem/siwe";
 import { loadTestWallets, publicClient, revertName, sendRaw, writeContract, type TestWallet } from "./lib/tx";
-import { ESCROW_ADDRESS, MUSD_ADDRESS, escrowFlowAbi, musdAbi } from "../src/config/contracts";
+import { ESCROW_ADDRESS, MUSD_ADDRESS, SMUSD_ADDRESS, escrowFlowAbi, musdAbi } from "../src/config/contracts";
 import { MUSD_PERMIT_DOMAIN_NAME, MUSD_PERMIT_DOMAIN_VERSION } from "../src/config/abi/musd";
 import { explorerTx } from "../src/config/chains";
 import { gasFloor, ERC20_GAS_FLOOR } from "../src/lib/gas";
@@ -117,6 +120,10 @@ async function expectRevert(w: TestWallet, label: string, functionName: string, 
 async function readProject(id: bigint) {
   return publicClient.readContract({ address: ESCROW_ADDRESS, abi: escrowFlowAbi, functionName: "getProject", args: [id] });
 }
+async function readYield(id: bigint) {
+  return publicClient.readContract({ address: ESCROW_ADDRESS, abi: escrowFlowAbi, functionName: "getYield", args: [id] });
+}
+
 async function musdBalance(a: Address) {
   return publicClient.readContract({ address: MUSD_ADDRESS, abi: musdAbi, functionName: "balanceOf", args: [a] });
 }
@@ -151,6 +158,8 @@ async function verifyTx(c: Client, hash: Hex, expectEvent: string) {
 }
 
 const future = (s: number) => Math.floor(Date.now() / 1000) + s;
+let yieldToFreelancer = 0n;
+let yieldToClient = 0n;
 
 /** Waits until the chain's latest block timestamp passes `ts` (block time can lag the local clock). */
 async function waitForChainTime(ts: number, label: string) {
@@ -172,7 +181,7 @@ async function reclaimB(client: Client, w: Record<string, TestWallet>, chainId: 
   check(pb.status === 4 && pb.releasedAmount + pb.refundedAmount === pb.fundedAmount, "project B closed as Completed and reconciled");
 }
 
-function draft(freelancer: Address, opts: { title: string; budget: string; milestones: { title: string; amount: string; deadline: number; review: number }[]; autoRelease: boolean; deadlineReclaim: boolean; grace: number }) {
+function draft(freelancer: Address, opts: { title: string; budget: string; milestones: { title: string; amount: string; deadline: number; review: number }[]; autoRelease: boolean; deadlineReclaim: boolean; grace: number; savingsBps?: number }) {
   return {
     title: opts.title,
     summary: "Live e2e test project on Mezo testnet",
@@ -199,6 +208,7 @@ function draft(freelancer: Address, opts: { title: string; budget: string; miles
       arbiter: null,
       cancellationTerms: "Mutual cancellation refunds unpaid, undisputed milestones.",
       disputeTerms: "Parties agree a split on-chain.",
+      ...(opts.savingsBps !== undefined ? { savings: { enabled: true, freelancerShareBps: opts.savingsBps } } : {}),
     },
     references: [],
   };
@@ -238,7 +248,8 @@ async function freelancerAccepts(freelancer: Client, projectId: string, chainId:
   check(v.data.access === "freelancer" && !!v.data.onchainTerms, `${label}: freelancer sees the committed terms`);
   const p = await readProject(chainId);
   const ms = await publicClient.readContract({ address: ESCROW_ADDRESS, abi: escrowFlowAbi, functionName: "getMilestones", args: [chainId] });
-  const cmp = compareTermsWithChain(v.data.onchainTerms!, p as never, ms as never);
+  const y = await readYield(chainId);
+  const cmp = compareTermsWithChain(v.data.onchainTerms!, p as never, ms as never, { enabled: y.enabled, freelancerBps: y.freelancerBps });
   check(cmp.ok, `${label}: terms document matches on-chain parameters (independent check)`, cmp.mismatches.join("; "));
   const { hash } = await tx(freelancer.w, `${label}: acceptTerms`, "acceptTerms", [chainId, p.termsHash, p.termsVersion], gasFloor("acceptTerms"));
   await verifyTx(freelancer, hash, "TermsAccepted");
@@ -317,11 +328,12 @@ async function main() {
   A = await createAndLink(
     client,
     draft(w.freelancer.address, {
-      title: "Website build — e2e (spec §26)",
+      title: "Website build — e2e (spec §26, sMUSD savings)",
       budget: dec("200"),
       autoRelease: true,
       deadlineReclaim: true,
       grace: 86400,
+      savingsBps: 5000,
       milestones: [
         { title: "UI design", amount: dec("40"), deadline: future(7 * 86400), review: 3 * 86400 },
         { title: "Frontend implementation", amount: dec("60"), deadline: future(14 * 86400), review: 3 * 86400 },
@@ -350,6 +362,14 @@ async function main() {
   const fundA = await tx(client.w, "A: fundWithPermit 200 MUSD", "fundWithPermit", [A.chainId, deadline, v !== undefined ? Number(v) : yParity + 27, r, s], gasFloor("fundWithPermit", 4));
   const fundTransfers = musdTransfers(fundA.receipt);
   check(fundTransfers.some((t) => t.from === w.client.address && t.to === getAddress(ESCROW_ADDRESS) && t.value === total), "funding: MUSD Transfer client → escrow of exactly 200 MUSD");
+  check(
+    fundTransfers.some((t) => t.from === getAddress(ESCROW_ADDRESS) && t.to === getAddress(SMUSD_ADDRESS) && t.value === total),
+    "sMUSD: the escrow deposited exactly the funded budget into Mezo's MUSDSavingsRate vault in the same tx",
+  );
+  {
+    const y = await readYield(A.chainId);
+    check(y.enabled && y.freelancerBps === 5000 && y.principal === total, "sMUSD: getYield reports savings on, 50/50 split, principal = held budget");
+  }
   await verifyTx(client, fundA.hash, "ProjectFunded");
   {
     const v1 = await client.req<ProjectView>("GET", `/api/projects/${A.projectId}`);
@@ -384,7 +404,16 @@ async function main() {
   const fBefore = await musdBalance(w.freelancer.address);
   const rel = await tx(client.w, "A: approveAndRelease M1", "approveAndRelease", [A.chainId, 0n], gasFloor("approveAndRelease"));
   const relT = musdTransfers(rel.receipt);
-  check(relT.length === 1 && relT[0].from === getAddress(ESCROW_ADDRESS) && relT[0].to === w.freelancer.address && relT[0].value === amt("40"), "release: MUSD Transfer escrow → freelancer of exactly 40 MUSD");
+  check(
+    relT.filter((t) => t.from === getAddress(ESCROW_ADDRESS)).length === 1 &&
+      relT.some((t) => t.from === getAddress(ESCROW_ADDRESS) && t.to === w.freelancer.address && t.value === amt("40")),
+    "release: exactly one MUSD Transfer out of the escrow, to the freelancer, of exactly 40 MUSD",
+  );
+  check(
+    relT.some((t) => t.from === getAddress(SMUSD_ADDRESS) && t.to === getAddress(ESCROW_ADDRESS) && t.value >= amt("40")),
+    "sMUSD: the release withdrew the milestone's principal 1:1 from the savings vault",
+  );
+  check((await readYield(A.chainId)).principal === amt("160"), "sMUSD: vault principal now equals the 160 still held");
   await verifyTx(client, rel.hash, "MilestoneReleased");
   check((await musdBalance(w.freelancer.address)) - fBefore === amt("40"), "freelancer balance increased by exactly 40 MUSD");
   await expectRevert(w.client, "negative: duplicate release of M1 is rejected", "approveAndRelease", [A.chainId, 0n], "InvalidMilestoneStatus");
@@ -424,6 +453,17 @@ async function main() {
   check(reason.status === 201 && !!reason.data.noteHash, "dispute reason stored; hash ready for chain");
   const disp = await tx(client.w, "A: openDispute M2", "openDispute", [A.chainId, 1n, reason.data.noteHash], gasFloor("openDispute"));
   await verifyTx(client, disp.hash, "DisputeOpened");
+  await expectRevert(w.freelancer, "negative: freelancer cannot dispute M3, which was never delivered (v2)", "openDispute", [A.chainId, 2n, reason.data.noteHash], "NothingSubmitted");
+
+  // Audit MUST-FIX, live: freelancer proposes cancellation while M2 is disputed; the client then
+  // withdraws the dispute. In v1 the client could now accept the cancellation and sweep M2.
+  await tx(freelancer.w, "A: proposeCancellation (freelancer, M2 disputed)", "proposeCancellation", [A.chainId], gasFloor("proposeCancellation"));
+  const wd = await tx(client.w, "A: withdrawDispute M2", "withdrawDispute", [A.chainId, 1n], gasFloor("withdrawDispute"));
+  await verifyTx(client, wd.hash, "DisputeWithdrawn");
+  check((await readProject(A.chainId)).cancelProposer === "0x0000000000000000000000000000000000000000", "audit fix: withdrawing the dispute cleared the pending cancellation on-chain");
+  await expectRevert(w.client, "audit fix: client can no longer sweep the submitted M2 via the old cancellation", "acceptCancellation", [A.chainId, amt("160")], "NoCancellationProposal");
+  const disp2 = await tx(client.w, "A: openDispute M2 again", "openDispute", [A.chainId, 1n, reason.data.noteHash], gasFloor("openDispute"));
+  await verifyTx(client, disp2.hash, "DisputeOpened");
   await expectRevert(w.client, "negative: disputed M2 cannot be released while frozen", "approveAndRelease", [A.chainId, 1n], "InvalidMilestoneStatus");
   await expectRevert(w.freelancer, "negative: disputed M2 cannot be claimed", "claimAfterReviewTimeout", [A.chainId, 1n], "InvalidMilestoneStatus");
   const ev = await freelancer.req("POST", `/api/projects/${A.projectId}/notes`, { kind: "evidence", milestoneIndex: 1, body: "Both pages are in the preview build; see commit abc123.", links: ["https://github.com/mezo-org/musd"] });
@@ -444,9 +484,10 @@ async function main() {
 
   // Cancellation of the rest (M3 + M4 = 100 MUSD back to client)
   await tx(client.w, "A: proposeCancellation", "proposeCancellation", [A.chainId], gasFloor("proposeCancellation"));
-  await expectRevert(w.stranger, "negative: stranger cannot accept the cancellation", "acceptCancellation", [A.chainId], "NotParty");
+  await expectRevert(w.stranger, "negative: stranger cannot accept the cancellation", "acceptCancellation", [A.chainId, amt("100")], "NotParty");
+  await expectRevert(w.freelancer, "negative: accepting with a different refund than the contract would pay reverts (v2)", "acceptCancellation", [A.chainId, amt("160")], "RefundMismatch");
   const cBefore = await musdBalance(w.client.address);
-  const cancel = await tx(freelancer.w, "A: acceptCancellation", "acceptCancellation", [A.chainId], gasFloor("acceptCancellation", 4));
+  const cancel = await tx(freelancer.w, "A: acceptCancellation (exact refund 100)", "acceptCancellation", [A.chainId, amt("100")], gasFloor("acceptCancellation", 4));
   check((await musdBalance(w.client.address)) - cBefore === amt("100"), "cancellation refunded exactly 100 MUSD (M3 + M4) to the client");
   await verifyTx(freelancer, cancel.hash, "ProjectCancelled");
   {
@@ -458,6 +499,18 @@ async function main() {
     const pay = await client.req<{ items: { event: string }[] }>("GET", "/api/payments");
     const evs = pay.data.items.map((i) => i.event);
     check(["ProjectFunded", "MilestoneReleased", "DisputeResolved", "ProjectCancelled"].every((e) => evs.includes(e)), "payments page lists funding, release, settlement and refund");
+    const y = await readYield(A.chainId);
+    check(y.principal === 0n, "sMUSD: nothing of project A is left in the vault once it is settled");
+    if (y.accrued > 0n) {
+      const f0 = await musdBalance(w.freelancer.address);
+      const dist = await tx(client.w, "A: distributeYield", "distributeYield", [A.chainId], gasFloor("distributeYield"));
+      await verifyTx(client, dist.hash, "YieldDistributed");
+      yieldToFreelancer = (await musdBalance(w.freelancer.address)) - f0;
+      yieldToClient = (await readYield(A.chainId)).paid - yieldToFreelancer;
+      check(yieldToFreelancer >= 0n && (await readYield(A.chainId)).accrued === 0n, `sMUSD: yield paid out 50/50 (${formatMusd(yieldToFreelancer, { maxDecimals: 8 })} MUSD to the freelancer)`);
+    } else {
+      await expectRevert(w.client, "sMUSD: no testnet yield accrued in this window, so distribution correctly reverts", "distributeYield", [A.chainId], "NothingToDistribute");
+    }
   }
 
   // ============ Project B: auto-release after review timeout + deadline reclaim ============
@@ -469,7 +522,7 @@ async function main() {
         budget: "2",
         autoRelease: true,
         deadlineReclaim: true,
-        grace: 0,
+        grace: 60,
         milestones: [
           { title: "Quick fix", amount: "1", deadline: future(3600), review: 60 },
           { title: "Never delivered", amount: "1", deadline: future(170), review: 60 },
@@ -497,9 +550,10 @@ async function main() {
   const endFreelancer = await musdBalance(w.freelancer.address);
   console.log(`\n  client MUSD ${formatMusd(startClient)} → ${formatMusd(endClient)} · freelancer MUSD ${formatMusd(startFreelancer)} → ${formatMusd(endFreelancer)}`);
   const b = SKIP_TIMED ? 0n : parseMusd("1");
+  // (yieldToFreelancer / yieldToClient are the sMUSD savings shares, 0 if no testnet yield accrued.)
   // Full run: client funds 200 (+2), gets 30 + 100 (+1) back. Resumed run starts after funding + M1.
-  const expFreelancer = (RESUME ? amt("30") : amt("70")) + b;
-  const expClientSpend = (RESUME ? -amt("130") : amt("70")) + b;
+  const expFreelancer = (RESUME ? amt("30") : amt("70")) + b + yieldToFreelancer;
+  const expClientSpend = (RESUME ? -amt("130") : amt("70")) + b - yieldToClient;
   check(endFreelancer - startFreelancer === expFreelancer, "freelancer net gain matches released amounts exactly");
   check(startClient - endClient === expClientSpend, "client net balance change matches releases and refunds exactly");
   return { A, endClient, endFreelancer };

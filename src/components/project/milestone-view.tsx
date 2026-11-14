@@ -133,7 +133,7 @@ export function MilestoneView({ id, index, focus }: { id: string; index: number;
             <Panel>
               <PanelHeader title="Submission history" />
               <div className="space-y-4 p-5">
-                {mySubs.slice(1).map((s) => (
+                {mySubs.filter((s) => s.id !== latest?.id).map((s) => (
                   <SubmissionCard key={s.id} s={s} onchainHash={m?.submissionHash} />
                 ))}
               </div>

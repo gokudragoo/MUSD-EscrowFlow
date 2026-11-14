@@ -40,6 +40,19 @@ describe("EscrowFlow · views", () => {
     expect(await escrow.reviewDeadline(id, 0)).to.equal(0n);
   });
 
+  it("reclaimAvailableAt is deadline + pausedFor + grace for Pending (shifted by a withdrawn dispute)", async () => {
+    const { escrow, client, id } = await funded();
+    const m1 = await escrow.getMilestone(id, 1);
+    await escrow.connect(client).openDispute(id, 1, REASON);
+    expect(await escrow.reclaimAvailableAt(id, 1)).to.equal(0n); // disputed: not reclaimable
+    await time.increase(5 * DAY);
+    await escrow.connect(client).withdrawDispute(id, 1);
+    const paused = (await escrow.getMilestone(id, 1)).pausedFor;
+    expect(paused).to.be.gte(BigInt(5 * DAY));
+    expect((await escrow.getMilestone(id, 1)).deadline).to.equal(m1.deadline); // agreed term untouched
+    expect(await escrow.reclaimAvailableAt(id, 1)).to.equal(m1.deadline + paused + BigInt(2 * DAY));
+  });
+
   it("reclaimAvailableAt is deadline + grace for Pending, 0 once submitted / settled", async () => {
     const { escrow, client, freelancer, id } = await funded();
     const m1 = await escrow.getMilestone(id, 1);
@@ -71,6 +84,8 @@ describe("EscrowFlow · views", () => {
       () => escrow.heldAmount(bad),
       () => escrow.reviewDeadline(bad, 0),
       () => escrow.reclaimAvailableAt(bad, 0),
+      () => escrow.getYield(bad),
+      () => escrow.getYield(1n), // below the id offset
     ];
     for (const r of reads) await expect(r()).to.be.revertedWithCustomError(escrow, "ProjectNotFound");
     const params = {
@@ -83,6 +98,8 @@ describe("EscrowFlow · views", () => {
       amounts: [E(1)],
       deadlines: [BigInt(await time.latest()) + BigInt(DAY)],
       reviewPeriods: [DAY],
+      yieldEnabled: false,
+      freelancerYieldBps: 0,
     };
     const writes = [
       () => escrow.connect(client).updateTerms(bad, params),
@@ -102,7 +119,8 @@ describe("EscrowFlow · views", () => {
       () => escrow.connect(client).withdrawDispute(bad, 0),
       () => escrow.connect(client).proposeCancellation(bad),
       () => escrow.connect(client).revokeCancellation(bad),
-      () => escrow.connect(client).acceptCancellation(bad),
+      () => escrow.connect(client).acceptCancellation(bad, 0),
+      () => escrow.connect(client).distributeYield(bad),
     ];
     for (const w of writes) await expect(w()).to.be.revertedWithCustomError(escrow, "ProjectNotFound").withArgs(bad);
   });

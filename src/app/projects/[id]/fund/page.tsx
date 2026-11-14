@@ -3,15 +3,16 @@
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAccount, useBalance, useReadContract, useSignTypedData } from "wagmi";
+import { useAccount, useBalance, useReadContract, useSignTypedData, useSwitchChain } from "wagmi";
 import { parseSignature } from "viem";
-import { ArrowLeft, CheckCircle2, Circle, Loader2, PenLine, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Circle, Loader2, PenLine, PiggyBank, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PageContainer, SignInGate } from "@/components/layout/gate";
 import { Button } from "@/components/ui/button";
 import { Notice, PageHeader, Panel, PanelHeader, Skeleton } from "@/components/ui/primitives";
 import { Amount, TxLink } from "@/components/ui/chain";
 import { EscrowBar, KeyValue } from "@/components/escrow/escrow-ui";
+import { TroveFunding } from "@/components/wallet/trove-funding";
 import { useProject } from "@/hooks/useProject";
 import { useNow } from "@/hooks/useClient";
 import { useEscrowTx } from "@/hooks/useEscrowTx";
@@ -40,6 +41,7 @@ function FundEscrow({ id }: { id: string }) {
   const approveTx = useEscrowTx();
   const fundTx = useEscrowTx();
   const { signTypedDataAsync } = useSignTypedData();
+  const { switchChainAsync } = useSwitchChain();
   const [signing, setSigning] = useState(false);
   const now = useNow(10_000);
   const btc = useBalance({ address, chainId: SUPPORTED_CHAIN_ID, query: { enabled: !!address } });
@@ -48,26 +50,30 @@ function FundEscrow({ id }: { id: string }) {
   const nonce = useReadContract({ address: MUSD_ADDRESS, abi: musdAbi, functionName: "nonces", args: address ? [address] : undefined, chainId: SUPPORTED_CHAIN_ID, query: { enabled: !!address } });
 
   if (isLoading) return <Skeleton className="h-96" />;
-  if (!view || !chain) return <Notice tone="warning" title="This project has no on-chain escrow yet">Create the escrow from the project page first.</Notice>;
+  if (!view) return <Notice tone="danger" title="Could not load this project">Check your connection and reload the page.</Notice>;
+  if (!chain) return <Notice tone="warning" title="This project has no on-chain escrow yet">Create the escrow from the project page first.</Notice>;
 
   const total = chain.project.totalAmount;
   const pa = projectActions(chain.project, address, chain.milestones, now);
-  const funded = chain.project.status >= ProjectStatus.Active;
+  // Funded means money actually arrived; a project cancelled before funding is not "funded".
+  const funded = chain.project.fundedAmount > 0n;
+  const cancelledUnfunded = chain.project.status === ProjectStatus.Cancelled && !funded;
+  const savings = chain.version === 2 && chain.yield?.enabled ? chain.yield : null;
   const enoughBalance = balance.data !== undefined && balance.data >= total;
   const approved = allowance.data !== undefined && allowance.data >= total;
   const id_ = BigInt(chain.id);
 
+  // The transaction hook already reported the verified outcome; just go back to the project.
   const afterFund = async (ok: boolean) => {
-    if (ok) {
-      toast.success("Escrow funded", { description: "Verified on-chain. The freelancer has been notified." });
-      router.push(`/projects/${id}`);
-    }
+    if (ok) router.push(`/projects/${id}`);
   };
 
   const fundWithPermit = async () => {
     if (!address || nonce.data === undefined) return;
     setSigning(true);
     try {
+      // The permit's EIP-712 domain is bound to Mezo testnet; wallets refuse to sign it on another chain.
+      if (chainId !== SUPPORTED_CHAIN_ID) await switchChainAsync({ chainId: SUPPORTED_CHAIN_ID });
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 30 * 60);
       const signature = await signTypedDataAsync({
         domain: { name: MUSD_PERMIT_DOMAIN_NAME, version: MUSD_PERMIT_DOMAIN_VERSION, chainId: SUPPORTED_CHAIN_ID, verifyingContract: MUSD_ADDRESS },
@@ -86,7 +92,7 @@ function FundEscrow({ id }: { id: string }) {
       setSigning(false);
       const { v, r, s, yParity } = parseSignature(signature);
       const vv = v !== undefined ? Number(v) : yParity + 27;
-      const res = await fundTx.run({ label: "Fund escrow", functionName: "fundWithPermit", args: [id_, deadline, vv, r, s], escrowFn: "fundWithPermit", milestoneCount: chain.milestones.length });
+      const res = await fundTx.run({ label: "Fund escrow", functionName: "fundWithPermit", args: [id_, deadline, vv, r, s], escrowFn: "fundWithPermit", milestoneCount: chain.milestones.length, successMessage: "Escrow funded" });
       await afterFund(!!res);
     } catch (e) {
       setSigning(false);
@@ -105,7 +111,13 @@ function FundEscrow({ id }: { id: string }) {
           <Link href={`/projects/${id}`} className="text-signal-300 hover:underline">Return to the project</Link>
         </Notice>
       )}
+      {cancelledUnfunded && (
+        <Notice tone="warning" title="This project was cancelled before funding" className="mb-6">
+          Nothing was deposited. <Link href={`/projects/${id}`} className="text-signal-300 hover:underline">Return to the project</Link>
+        </Notice>
+      )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0 space-y-6">
         <Panel>
           <PanelHeader title="Deposit" />
           <div className="space-y-5 p-5">
@@ -118,8 +130,15 @@ function FundEscrow({ id }: { id: string }) {
             <EscrowBar amounts={chain.milestones.map((m) => m.amount)} statuses={null} funded={false} />
             {!pa.fund.available && !funded && <Notice tone="warning" title="Funding is not available">{pa.fund.reason}</Notice>}
             {!enoughBalance && balance.data !== undefined && !funded && (
-              <Notice tone="danger" title="Insufficient MUSD">
-                Your wallet holds <Amount wei={balance.data} />. You need <Amount wei={total} /> to fund this escrow.
+              <Notice tone="warning" title="Not enough MUSD yet">
+                Your wallet holds <Amount wei={balance.data} />. You need <Amount wei={total} />. Borrow the difference against BTC below, through Mezo&apos;s own
+                trove contracts.
+              </Notice>
+            )}
+            {savings && !funded && (
+              <Notice icon={<PiggyBank className="size-4" />} title="This escrow earns the sMUSD savings rate">
+                The contract deposits the budget 1:1 into Mezo&apos;s MUSDSavingsRate vault in the same transaction and withdraws exactly what each payout needs.
+                Yield is split {savings.freelancerBps / 100}% to the freelancer and {(10_000 - savings.freelancerBps) / 100}% to you.
               </Notice>
             )}
 
@@ -137,7 +156,7 @@ function FundEscrow({ id }: { id: string }) {
                 <div className="text-[14px] font-semibold text-white">Two transactions</div>
                 <p className="mt-1 text-[13px] text-mist-300">Approve the exact amount, then fund. Use this if your wallet does not support typed-data signatures.</p>
                 <ol className="mt-3 space-y-2">
-                  <Step done={approved} active={!approved} label={<>Approve <Amount wei={total} /> for the escrow contract</>}>
+                  <Step done={approved || funded} active={!approved && !funded} label={<>Approve <Amount wei={total} /> for the escrow contract</>}>
                     <Button
                       size="sm"
                       variant="secondary"
@@ -157,7 +176,7 @@ function FundEscrow({ id }: { id: string }) {
                       disabled={!approved || !pa.fund.available || funded}
                       loading={fundTx.busy}
                       onClick={async () => {
-                        const r = await fundTx.run({ label: "Fund escrow", functionName: "fund", args: [id_], escrowFn: "fund", milestoneCount: chain.milestones.length });
+                        const r = await fundTx.run({ label: "Fund escrow", functionName: "fund", args: [id_], escrowFn: "fund", milestoneCount: chain.milestones.length, successMessage: "Escrow funded" });
                         await afterFund(!!r);
                       }}
                     >
@@ -167,9 +186,19 @@ function FundEscrow({ id }: { id: string }) {
                 </ol>
               </div>
             </div>
-            <TxStatus phase={fundTx.state.phase} hash={fundTx.state.hash} error={fundTx.state.error} />
+            <TxStatus phase={approveTx.state.phase} hash={approveTx.state.hash} error={approveTx.state.error} label="Approval" />
+            <TxStatus phase={fundTx.state.phase} hash={fundTx.state.hash} error={fundTx.state.error} label="Funding" />
           </div>
         </Panel>
+        {!funded && !cancelledUnfunded && pa.fund.available && balance.data !== undefined && !enoughBalance && (
+          <Panel>
+            <PanelHeader title="Borrow MUSD against BTC" description="Uses Mezo's BorrowerOperations. Your wallet signs; EscrowFlow never touches the trove." />
+            <div className="p-5">
+              <TroveFunding shortfall={total - balance.data} onFunded={() => void balance.refetch()} />
+            </div>
+          </Panel>
+        )}
+        </div>
         <aside className="space-y-6">
           <Panel>
             <PanelHeader title="Your wallet" />
@@ -214,20 +243,23 @@ function Step({ done, active, label, children }: { done: boolean; active: boolea
   );
 }
 
-function TxStatus({ phase, hash, error }: { phase: string; hash?: string; error?: string }) {
+function TxStatus({ phase, hash, error, label }: { phase: string; hash?: string; error?: string; label: string }) {
   if (phase === "idle") return null;
   const text: Record<string, string> = {
-    preparing: "Preparing and simulating the transaction…",
-    signing: "Waiting for your wallet confirmation…",
-    pending: "Submitted — waiting for the block to confirm…",
-    verifying: "Confirmed on-chain — verifying the result…",
-    confirmed: "Confirmed and verified.",
-    failed: error ?? "Failed.",
+    preparing: "preparing and simulating…",
+    signing: "waiting for your wallet confirmation…",
+    pending: "sent, waiting for the block to confirm…",
+    delayed: "sent, not confirmed yet. Don't send it again; it is picked up automatically.",
+    verifying: "confirmed on-chain, verifying the result…",
+    confirmed: "confirmed.",
+    failed: error ?? "failed.",
   };
   return (
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 rounded-[10px] border px-3 py-2 text-[13px]", phase === "failed" ? "border-danger-400/40 text-danger-300" : phase === "confirmed" ? "border-paid-400/40 text-paid-300" : "border-ink-600 text-mist-300")}>
-      {phase !== "failed" && phase !== "confirmed" && <Loader2 className="size-4 animate-spin" aria-hidden />}
-      {text[phase]}
+      {phase !== "failed" && phase !== "confirmed" && phase !== "delayed" && <Loader2 className="size-4 animate-spin" aria-hidden />}
+      <span>
+        <span className="font-medium">{label}</span> {text[phase]}
+      </span>
       {hash && <TxLink hash={hash} />}
     </div>
   );

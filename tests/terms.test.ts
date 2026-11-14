@@ -147,6 +147,48 @@ describe("compareTermsWithChain", () => {
   });
 });
 
+describe("sMUSD savings terms (v2)", () => {
+  const withSavings = (bps: number) => sampleTerms({ rules: { ...sampleTerms().rules, savings: { enabled: true, freelancerShareBps: bps } } });
+
+  it("leaves documents without savings byte-identical (old hashes still verify)", () => {
+    const plain = sampleTerms();
+    expect(Object.keys(plain.rules)).not.toContain("savings");
+    expect(termsToParams(plain)).toMatchObject({ yieldEnabled: false, freelancerYieldBps: 0 });
+  });
+
+  it("passes the savings flag and split to the contract and changes the hash", () => {
+    const t = withSavings(5000);
+    expect(termsToParams(t)).toMatchObject({ yieldEnabled: true, freelancerYieldBps: 5000 });
+    expect(hashTerms(t)).not.toBe(hashTerms(sampleTerms()));
+  });
+
+  it("checks the on-chain savings terms against the document", () => {
+    const t = withSavings(2500);
+    const p = termsToParams(t);
+    const chainProject = {
+      client: CLIENT as `0x${string}`,
+      freelancer: FREELANCER as `0x${string}`,
+      arbiter: zeroAddress,
+      termsHash: p.termsHash,
+      autoRelease: true,
+      deadlineReclaim: true,
+      reclaimGracePeriod: 2 * 86_400,
+      totalAmount: parseMusd("200"),
+      milestoneCount: 4,
+    };
+    const ms = p.amounts.map((amount, i) => ({ amount, deadline: p.deadlines[i], reviewPeriod: p.reviewPeriods[i] }));
+    expect(compareTermsWithChain(t, chainProject, ms, { enabled: true, freelancerBps: 2500 }).ok).toBe(true);
+    expect(compareTermsWithChain(t, chainProject, ms, { enabled: true, freelancerBps: 5000 }).mismatches).toContain("Savings yield split differs");
+    expect(compareTermsWithChain(t, chainProject, ms, { enabled: false, freelancerBps: 0 }).mismatches).toContain("Savings (sMUSD) rule differs");
+    // A v1 escrow (no getYield) can never satisfy a document that promises savings.
+    expect(compareTermsWithChain(t, chainProject, ms).ok).toBe(false);
+  });
+
+  it("rejects an out-of-range split", () => {
+    expect(validateTermsDocument(withSavings(10_001))).toContain("Savings yield split must be between 0 and 100%");
+  });
+});
+
 describe("submission and note hashes", () => {
   it("commit to attachments and content", () => {
     const rec = {

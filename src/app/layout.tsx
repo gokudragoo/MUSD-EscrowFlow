@@ -30,7 +30,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0a1022",
+  themeColor: "#0e1420",
   colorScheme: "dark",
 };
 
@@ -39,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" className={`${sans.variable} ${serif.variable} ${mono.variable}`}>
       <body>
-        <a href="#main" className="sr-only z-50 rounded bg-signal-500 px-3 py-2 text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
+        <a href="#main" className="sr-only z-50 rounded bg-signal-500 px-3 py-2 text-ink-950 focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
           Skip to content
         </a>
         <Providers cookie={cookie}>

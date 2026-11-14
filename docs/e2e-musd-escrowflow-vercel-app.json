@@ -1,17 +1,368 @@
 {
   "baseUrl": "https://musd-escrowflow.vercel.app",
-  "ranAt": "2026-10-26T14:36:12.722Z",
-  "escrow": "0xC52C7d72aDeb81998A3eAB2d3a25634C43822fdE",
+  "ranAt": "2026-11-14T13:53:50.191Z",
+  "escrow": "0x8AfaAcA2CC9C6365E5ac1DE46C090C49009982f8",
   "projectA": {
-    "id": "0375c3cd-7442-433a-b15c-ec3a86f141e2",
-    "chainId": "0"
+    "id": "67bc5b4d-0484-44fb-950e-f2f90877a960",
+    "chainId": "1002"
   },
-  "passed": 5,
+  "passed": 83,
   "failed": 0,
   "results": [
     {
+      "step": "health: db + rpc ok on chain 31611",
+      "ok": true
+    },
+    {
       "step": "SIWE sign-in as client",
       "ok": true
+    },
+    {
+      "step": "SIWE sign-in as freelancer",
+      "ok": true
+    },
+    {
+      "step": "SIWE sign-in as stranger",
+      "ok": true
+    },
+    {
+      "step": "negative: replayed SIWE message is rejected (single-use nonce)",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "step": "negative: dashboard without a session is 401",
+      "ok": true
+    },
+    {
+      "step": "profiles saved for client and freelancer",
+      "ok": true
+    },
+    {
+      "step": "client holds enough MUSD for the scenario",
+      "ok": true
+    },
+    {
+      "step": "negative: milestones not adding up to the budget are rejected",
+      "ok": true,
+      "detail": "Milestones add up to 200 MUSD — 10 MUSD of the budget is unallocated"
+    },
+    {
+      "step": "A: agreement draft saved via API",
+      "ok": true,
+      "detail": "id 67bc5b4d-0484-44fb-950e-f2f90877a960"
+    },
+    {
+      "step": "A: client recomputes the same terms hash",
+      "ok": true
+    },
+    {
+      "step": "A: server verified createProject and linked escrow",
+      "ok": true,
+      "detail": "escrow #1002"
+    },
+    {
+      "step": "negative: stranger cannot accept the terms",
+      "ok": true,
+      "detail": "reverted with NotFreelancer"
+    },
+    {
+      "step": "negative: client cannot fund before the freelancer accepts",
+      "ok": true,
+      "detail": "reverted with InvalidProjectStatus"
+    },
+    {
+      "step": "A: freelancer sees the committed terms",
+      "ok": true
+    },
+    {
+      "step": "A: terms document matches on-chain parameters (independent check)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "app verified TermsAccepted",
+      "ok": true,
+      "detail": "tx 0x1f425e64f9…"
+    },
+    {
+      "step": "funding: MUSD Transfer client → escrow of exactly 200 MUSD",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: the escrow deposited exactly the funded budget into Mezo's MUSDSavingsRate vault in the same tx",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: getYield reports savings on, 50/50 split, principal = held budget",
+      "ok": true
+    },
+    {
+      "step": "app verified ProjectFunded",
+      "ok": true,
+      "detail": "tx 0x6ea066eac9…"
+    },
+    {
+      "step": "app shows the escrow fully funded (200 held) from contract state",
+      "ok": true
+    },
+    {
+      "step": "negative: funding twice is rejected",
+      "ok": true,
+      "detail": "reverted with InvalidProjectStatus"
+    },
+    {
+      "step": "A/M1: submission record + attachment stored",
+      "ok": true,
+      "detail": "hash 0x4e6a205547…"
+    },
+    {
+      "step": "app verified MilestoneSubmitted",
+      "ok": true,
+      "detail": "tx 0x116e5b22a2…"
+    },
+    {
+      "step": "negative: stranger cannot read private project terms",
+      "ok": true
+    },
+    {
+      "step": "attachments are served only to participants",
+      "ok": true,
+      "detail": "stranger 403 · client 200"
+    },
+    {
+      "step": "negative: stranger cannot release M1 (simulation)",
+      "ok": true,
+      "detail": "reverted with NotClient"
+    },
+    {
+      "step": "negative: freelancer cannot release their own milestone",
+      "ok": true,
+      "detail": "reverted with NotClient"
+    },
+    {
+      "step": "unauthorised release reverted on-chain; nothing released",
+      "ok": true
+    },
+    {
+      "step": "release: exactly one MUSD Transfer out of the escrow, to the freelancer, of exactly 40 MUSD",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: the release withdrew the milestone's principal 1:1 from the savings vault",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: vault principal now equals the 160 still held",
+      "ok": true
+    },
+    {
+      "step": "app verified MilestoneReleased",
+      "ok": true,
+      "detail": "tx 0xfba63b312b…"
+    },
+    {
+      "step": "freelancer balance increased by exactly 40 MUSD",
+      "ok": true
+    },
+    {
+      "step": "negative: duplicate release of M1 is rejected",
+      "ok": true,
+      "detail": "reverted with InvalidMilestoneStatus"
+    },
+    {
+      "step": "negative: freelancer cannot claim an already-paid milestone",
+      "ok": true,
+      "detail": "reverted with InvalidMilestoneStatus"
+    },
+    {
+      "step": "client dashboard: project shows 40 MUSD released and 160 MUSD held (wallet total locked: 160)",
+      "ok": true
+    },
+    {
+      "step": "freelancer dashboard: 40 released to them, 160 allocated (not earned)",
+      "ok": true
+    },
+    {
+      "step": "project history records submission, approval/payment and funding (chain facts + app records)",
+      "ok": true
+    },
+    {
+      "step": "freelancer notified of the verified payment",
+      "ok": true
+    },
+    {
+      "step": "A/M2: submission record + attachment stored",
+      "ok": true,
+      "detail": "hash 0xcc586e1705…"
+    },
+    {
+      "step": "app verified MilestoneSubmitted",
+      "ok": true,
+      "detail": "tx 0xbf8787be15…"
+    },
+    {
+      "step": "dispute reason stored; hash ready for chain",
+      "ok": true
+    },
+    {
+      "step": "app verified DisputeOpened",
+      "ok": true,
+      "detail": "tx 0xa1ccb2d2bd…"
+    },
+    {
+      "step": "negative: freelancer cannot dispute M3, which was never delivered (v2)",
+      "ok": true,
+      "detail": "reverted with NothingSubmitted"
+    },
+    {
+      "step": "app verified DisputeWithdrawn",
+      "ok": true,
+      "detail": "tx 0xb3b5d93dc1…"
+    },
+    {
+      "step": "audit fix: withdrawing the dispute cleared the pending cancellation on-chain",
+      "ok": true
+    },
+    {
+      "step": "audit fix: client can no longer sweep the submitted M2 via the old cancellation",
+      "ok": true,
+      "detail": "reverted with NoCancellationProposal"
+    },
+    {
+      "step": "app verified DisputeOpened",
+      "ok": true,
+      "detail": "tx 0xfff5421b11…"
+    },
+    {
+      "step": "negative: disputed M2 cannot be released while frozen",
+      "ok": true,
+      "detail": "reverted with InvalidMilestoneStatus"
+    },
+    {
+      "step": "negative: disputed M2 cannot be claimed",
+      "ok": true,
+      "detail": "reverted with InvalidMilestoneStatus"
+    },
+    {
+      "step": "freelancer added dispute evidence (application record)",
+      "ok": true
+    },
+    {
+      "step": "negative: client cannot accept its own proposal",
+      "ok": true,
+      "detail": "reverted with CannotAcceptOwnProposal"
+    },
+    {
+      "step": "settlement: 30 MUSD to freelancer and 30 MUSD back to client in one tx",
+      "ok": true
+    },
+    {
+      "step": "app verified DisputeResolved",
+      "ok": true,
+      "detail": "tx 0xe8a9220e5b…"
+    },
+    {
+      "step": "dispute centre lists the resolved settlement",
+      "ok": true
+    },
+    {
+      "step": "negative: stranger cannot accept the cancellation",
+      "ok": true,
+      "detail": "reverted with NotParty"
+    },
+    {
+      "step": "negative: accepting with a different refund than the contract would pay reverts (v2)",
+      "ok": true,
+      "detail": "reverted with RefundMismatch"
+    },
+    {
+      "step": "cancellation refunded exactly 100 MUSD (M3 + M4) to the client",
+      "ok": true
+    },
+    {
+      "step": "app verified ProjectCancelled",
+      "ok": true,
+      "detail": "tx 0x5639964dc3…"
+    },
+    {
+      "step": "final ledger A: funded 200 = released 70 + refunded 130 + held 0 (status Cancelled)",
+      "ok": true
+    },
+    {
+      "step": "payments page lists funding, release, settlement and refund",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: nothing of project A is left in the vault once it is settled",
+      "ok": true
+    },
+    {
+      "step": "sMUSD: no testnet yield accrued in this window, so distribution correctly reverts",
+      "ok": true,
+      "detail": "reverted with NothingToDistribute"
+    },
+    {
+      "step": "B: agreement draft saved via API",
+      "ok": true,
+      "detail": "id 6caeb688-788b-41bd-8d13-d18c6424e5fc"
+    },
+    {
+      "step": "B: client recomputes the same terms hash",
+      "ok": true
+    },
+    {
+      "step": "B: server verified createProject and linked escrow",
+      "ok": true,
+      "detail": "escrow #1003"
+    },
+    {
+      "step": "B: freelancer sees the committed terms",
+      "ok": true
+    },
+    {
+      "step": "B: terms document matches on-chain parameters (independent check)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "app verified TermsAccepted",
+      "ok": true,
+      "detail": "tx 0xbe73ad4b5f…"
+    },
+    {
+      "step": "app verified ProjectFunded",
+      "ok": true,
+      "detail": "tx 0x09886100d2…"
+    },
+    {
+      "step": "B/M1: submission record + attachment stored",
+      "ok": true,
+      "detail": "hash 0x4718b3f7bf…"
+    },
+    {
+      "step": "app verified MilestoneSubmitted",
+      "ok": true,
+      "detail": "tx 0xfe3b11d9e5…"
+    },
+    {
+      "step": "negative: claim before the review period ends is rejected",
+      "ok": true,
+      "detail": "reverted with ReviewWindowOpen"
+    },
+    {
+      "step": "negative: client cannot request changes after the agreed review period",
+      "ok": true,
+      "detail": "reverted with ReviewWindowElapsed"
+    },
+    {
+      "step": "auto-release: freelancer claimed 1 MUSD after the unanswered review period",
+      "ok": true
+    },
+    {
+      "step": "app verified MilestoneReleased",
+      "ok": true,
+      "detail": "tx 0x6945de3249…"
     },
     {
       "step": "deadline reclaim: 1 MUSD returned to the client for the undelivered milestone",
@@ -20,23 +371,153 @@
     {
       "step": "app verified MilestoneRefunded",
       "ok": true,
-      "detail": "tx 0x6f15be3466…"
+      "detail": "tx 0xf229976baf…"
     },
     {
       "step": "project B closed as Completed and reconciled",
       "ok": true
     },
     {
-      "step": "client balance increased by exactly the reclaimed 1 MUSD",
+      "step": "freelancer net gain matches released amounts exactly",
+      "ok": true
+    },
+    {
+      "step": "client net balance change matches releases and refunds exactly",
       "ok": true
     }
   ],
   "transactions": [
     {
-      "label": "B: reclaimExpiredMilestone M2",
-      "hash": "0x6f15be34666fcc609b07e90f227104f330cfbdd2c611be9c90f0ea12789834de",
+      "label": "A: createProject",
+      "hash": "0x7530890c8732b02a296f067d9af8491974a8a3fe8284db64f9f8b859b1e82f0f",
       "status": "success",
-      "explorer": "https://explorer.test.mezo.org/tx/0x6f15be34666fcc609b07e90f227104f330cfbdd2c611be9c90f0ea12789834de"
+      "explorer": "https://explorer.test.mezo.org/tx/0x7530890c8732b02a296f067d9af8491974a8a3fe8284db64f9f8b859b1e82f0f"
+    },
+    {
+      "label": "A: acceptTerms",
+      "hash": "0x1f425e64f91d4a59760b54627860349af879bb53de4ed1d01899269da000e537",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x1f425e64f91d4a59760b54627860349af879bb53de4ed1d01899269da000e537"
+    },
+    {
+      "label": "A: fundWithPermit 200 MUSD",
+      "hash": "0x6ea066eac9efe3c6f89244b92c7cb0444c8e444fba04766501970d3bd619f8ff",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x6ea066eac9efe3c6f89244b92c7cb0444c8e444fba04766501970d3bd619f8ff"
+    },
+    {
+      "label": "A/M1: submitMilestone",
+      "hash": "0x116e5b22a234ba3003f08fe2bfea1306e3afa7e5f967d2f9297808cb3a174bc2",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x116e5b22a234ba3003f08fe2bfea1306e3afa7e5f967d2f9297808cb3a174bc2"
+    },
+    {
+      "label": "stranger approveAndRelease (expected revert)",
+      "hash": "0x2eb52073c8fadec09e18a4e2ae3e0c1822a1250642de10cf817be104c8429778",
+      "status": "reverted",
+      "explorer": "https://explorer.test.mezo.org/tx/0x2eb52073c8fadec09e18a4e2ae3e0c1822a1250642de10cf817be104c8429778"
+    },
+    {
+      "label": "A: approveAndRelease M1",
+      "hash": "0xfba63b312b3e9e103291721e85298b019f404077d0ac05237c09d46c284a9179",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xfba63b312b3e9e103291721e85298b019f404077d0ac05237c09d46c284a9179"
+    },
+    {
+      "label": "A/M2: submitMilestone",
+      "hash": "0xbf8787be15b857095fcddddbaeb9f6812ab04c3674577f941105b7164386ae9e",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xbf8787be15b857095fcddddbaeb9f6812ab04c3674577f941105b7164386ae9e"
+    },
+    {
+      "label": "A: openDispute M2",
+      "hash": "0xa1ccb2d2bd9bcb14305d620ec8593680801ee606e88bc269235e72e9f810adf2",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xa1ccb2d2bd9bcb14305d620ec8593680801ee606e88bc269235e72e9f810adf2"
+    },
+    {
+      "label": "A: proposeCancellation (freelancer, M2 disputed)",
+      "hash": "0xa36308b0d5bd07e42fa63ad3c46bef617acfd1b35c23033bef5097959fe080cd",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xa36308b0d5bd07e42fa63ad3c46bef617acfd1b35c23033bef5097959fe080cd"
+    },
+    {
+      "label": "A: withdrawDispute M2",
+      "hash": "0xb3b5d93dc1197d205680fee5aeb3dd06f91560016fab816500fbfcee928d354f",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xb3b5d93dc1197d205680fee5aeb3dd06f91560016fab816500fbfcee928d354f"
+    },
+    {
+      "label": "A: openDispute M2 again",
+      "hash": "0xfff5421b112a07b38987cafe76f2600cfeaf749f1583a85d447b3d6288c6c758",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xfff5421b112a07b38987cafe76f2600cfeaf749f1583a85d447b3d6288c6c758"
+    },
+    {
+      "label": "A: proposeSettlement 30/30",
+      "hash": "0xa4bfc07ae612eca0d251fee5116d07e6e739d1e406bc97410f0eed46fe91dbf8",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xa4bfc07ae612eca0d251fee5116d07e6e739d1e406bc97410f0eed46fe91dbf8"
+    },
+    {
+      "label": "A: acceptSettlement",
+      "hash": "0xe8a9220e5b36a610aa0dc92e0fba7042676d1176a9ce77623996d34b20f0b52c",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xe8a9220e5b36a610aa0dc92e0fba7042676d1176a9ce77623996d34b20f0b52c"
+    },
+    {
+      "label": "A: proposeCancellation",
+      "hash": "0xd2c62031c729e324d11833816d95785914ccfc390c9368741017eead3261ddcf",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xd2c62031c729e324d11833816d95785914ccfc390c9368741017eead3261ddcf"
+    },
+    {
+      "label": "A: acceptCancellation (exact refund 100)",
+      "hash": "0x5639964dc36cf634dd24ab59f2f46b0343a6211ac8f735758dc707767757e086",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x5639964dc36cf634dd24ab59f2f46b0343a6211ac8f735758dc707767757e086"
+    },
+    {
+      "label": "B: createProject",
+      "hash": "0x40f33602a8a4643beb3563c54c3905741bac1b1a696af02e7de624c0485de230",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x40f33602a8a4643beb3563c54c3905741bac1b1a696af02e7de624c0485de230"
+    },
+    {
+      "label": "B: acceptTerms",
+      "hash": "0xbe73ad4b5f70d2d487b7de0d324f5f5f8c9739267d12cfae0687727811ecb028",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xbe73ad4b5f70d2d487b7de0d324f5f5f8c9739267d12cfae0687727811ecb028"
+    },
+    {
+      "label": "B: approve 2 MUSD",
+      "hash": "0x956d5d7cded5606786f14b8224094639d11ee5bcd53d28f2a0e505c5fc7a6fd1",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x956d5d7cded5606786f14b8224094639d11ee5bcd53d28f2a0e505c5fc7a6fd1"
+    },
+    {
+      "label": "B: fund",
+      "hash": "0x09886100d2bb50fbcfa4fd821de20f9a306aecd950848c282a3f91a90e191638",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x09886100d2bb50fbcfa4fd821de20f9a306aecd950848c282a3f91a90e191638"
+    },
+    {
+      "label": "B/M1: submitMilestone",
+      "hash": "0xfe3b11d9e5cfa909c02f7d9a615acfc3bfcf0234511cc4690838d06b935bb5f5",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xfe3b11d9e5cfa909c02f7d9a615acfc3bfcf0234511cc4690838d06b935bb5f5"
+    },
+    {
+      "label": "B: claimAfterReviewTimeout M1",
+      "hash": "0x6945de3249b264848158a7aee24add0a625f35d7489324a57fbb8fc563997690",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0x6945de3249b264848158a7aee24add0a625f35d7489324a57fbb8fc563997690"
+    },
+    {
+      "label": "B: reclaimExpiredMilestone M2",
+      "hash": "0xf229976baf3215c29ec2ba3ee7596bc073f886b67ba1023e92d0ba404a82f9c5",
+      "status": "success",
+      "explorer": "https://explorer.test.mezo.org/tx/0xf229976baf3215c29ec2ba3ee7596bc073f886b67ba1023e92d0ba404a82f9c5"
     }
   ]
 }

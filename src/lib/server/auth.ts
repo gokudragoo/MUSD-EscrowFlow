@@ -43,7 +43,14 @@ export async function verifySiwe(req: NextRequest, message: string, signature: H
   const { host, origin } = requestOrigin(req);
   if (!parsed.address || !parsed.nonce) throw badRequest("Sign-in message is missing fields");
   if (parsed.domain !== host) throw badRequest("Sign-in message was created for a different site");
-  if (!parsed.uri || new URL(parsed.uri).origin !== origin) throw badRequest("Sign-in message URI does not match this site");
+  const uriOrigin = (() => {
+    try {
+      return parsed.uri ? new URL(parsed.uri).origin : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (!uriOrigin || uriOrigin !== origin) throw badRequest("Sign-in message URI does not match this site");
   if (parsed.chainId !== SUPPORTED_CHAIN_ID) throw badRequest("Sign-in message must target Mezo Testnet (31611)");
   const now = new Date();
   if (!parsed.issuedAt || Math.abs(now.getTime() - parsed.issuedAt.getTime()) > NONCE_TTL_MINUTES * 60_000) {

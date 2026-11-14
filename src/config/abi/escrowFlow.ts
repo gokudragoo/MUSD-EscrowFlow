@@ -6,6 +6,16 @@ export const escrowFlowAbi = [
         "internalType": "contract IERC20",
         "name": "token_",
         "type": "address"
+      },
+      {
+        "internalType": "contract ISavingsVault",
+        "name": "vault_",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "idOffset_",
+        "type": "uint256"
       }
     ],
     "stateMutability": "nonpayable",
@@ -140,6 +150,11 @@ export const escrowFlowAbi = [
   },
   {
     "inputs": [],
+    "name": "InvalidYieldSplit",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "LengthMismatch",
     "type": "error"
   },
@@ -180,6 +195,16 @@ export const escrowFlowAbi = [
   },
   {
     "inputs": [],
+    "name": "NothingSubmitted",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NothingToDistribute",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "ProjectAlreadyCancelled",
     "type": "error"
   },
@@ -216,6 +241,17 @@ export const escrowFlowAbi = [
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint128",
+        "name": "actual",
+        "type": "uint128"
+      }
+    ],
+    "name": "RefundMismatch",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "ReviewWindowElapsed",
     "type": "error"
@@ -229,6 +265,22 @@ export const escrowFlowAbi = [
       }
     ],
     "name": "ReviewWindowOpen",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint8",
+        "name": "bits",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "value",
+        "type": "uint256"
+      }
+    ],
+    "name": "SafeCastOverflowedUintDowncast",
     "type": "error"
   },
   {
@@ -261,6 +313,26 @@ export const escrowFlowAbi = [
   {
     "inputs": [],
     "name": "TermsMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "VaultMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "VaultShortfall",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "YieldNotEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "YieldUnavailable",
     "type": "error"
   },
   {
@@ -467,6 +539,12 @@ export const escrowFlowAbi = [
         "internalType": "address",
         "name": "by",
         "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "pausedSeconds",
+        "type": "uint64"
       }
     ],
     "name": "DisputeWithdrawn",
@@ -693,6 +771,44 @@ export const escrowFlowAbi = [
         "type": "uint256"
       },
       {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "amount",
+        "type": "uint128"
+      }
+    ],
+    "name": "SavingsDeposited",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "amount",
+        "type": "uint128"
+      }
+    ],
+    "name": "SavingsWithdrawn",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      },
+      {
         "indexed": true,
         "internalType": "uint256",
         "name": "index",
@@ -813,6 +929,100 @@ export const escrowFlowAbi = [
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "freelancer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "freelancerAmount",
+        "type": "uint128"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "client",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "clientAmount",
+        "type": "uint128"
+      }
+    ],
+    "name": "YieldDistributed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "YieldHarvested",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint32",
+        "name": "version",
+        "type": "uint32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "enabled",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16",
+        "name": "freelancerYieldBps",
+        "type": "uint16"
+      }
+    ],
+    "name": "YieldTermsSet",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "ID_OFFSET",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "MAX_DEADLINE_HORIZON",
     "outputs": [
@@ -866,6 +1076,19 @@ export const escrowFlowAbi = [
   },
   {
     "inputs": [],
+    "name": "MIN_RECLAIM_GRACE",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MIN_REVIEW_PERIOD",
     "outputs": [
       {
@@ -878,11 +1101,29 @@ export const escrowFlowAbi = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "accYieldPerPrincipal",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
         "name": "projectId",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint128",
+        "name": "expectedRefund",
+        "type": "uint128"
       }
     ],
     "name": "acceptCancellation",
@@ -1056,6 +1297,16 @@ export const escrowFlowAbi = [
             "internalType": "uint32[]",
             "name": "reviewPeriods",
             "type": "uint32[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "yieldEnabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint16",
+            "name": "freelancerYieldBps",
+            "type": "uint16"
           }
         ],
         "internalType": "struct EscrowFlow.ProjectParams",
@@ -1071,6 +1322,19 @@ export const escrowFlowAbi = [
         "type": "uint256"
       }
     ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      }
+    ],
+    "name": "distributeYield",
+    "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
   },
@@ -1211,6 +1475,11 @@ export const escrowFlowAbi = [
             "internalType": "uint128",
             "name": "refundedAmount",
             "type": "uint128"
+          },
+          {
+            "internalType": "uint64",
+            "name": "pausedFor",
+            "type": "uint64"
           }
         ],
         "internalType": "struct EscrowFlow.Milestone",
@@ -1307,6 +1576,11 @@ export const escrowFlowAbi = [
             "internalType": "uint128",
             "name": "refundedAmount",
             "type": "uint128"
+          },
+          {
+            "internalType": "uint64",
+            "name": "pausedFor",
+            "type": "uint64"
           }
         ],
         "internalType": "struct EscrowFlow.Milestone[]",
@@ -1432,6 +1706,52 @@ export const escrowFlowAbi = [
         ],
         "internalType": "struct EscrowFlow.Project",
         "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "projectId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getYield",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bool",
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint16",
+            "name": "freelancerBps",
+            "type": "uint16"
+          },
+          {
+            "internalType": "uint128",
+            "name": "principal",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "accrued",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "paid",
+            "type": "uint128"
+          }
+        ],
+        "internalType": "struct EscrowFlow.YieldView",
+        "name": "v",
         "type": "tuple"
       }
     ],
@@ -1683,6 +2003,19 @@ export const escrowFlowAbi = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "savingsVault",
+    "outputs": [
+      {
+        "internalType": "contract ISavingsVault",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -1721,6 +2054,32 @@ export const escrowFlowAbi = [
   {
     "inputs": [],
     "name": "totalHeld",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalYieldPrincipal",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "unattributedYield",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1784,6 +2143,16 @@ export const escrowFlowAbi = [
             "internalType": "uint32[]",
             "name": "reviewPeriods",
             "type": "uint32[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "yieldEnabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint16",
+            "name": "freelancerYieldBps",
+            "type": "uint16"
           }
         ],
         "internalType": "struct EscrowFlow.ProjectParams",

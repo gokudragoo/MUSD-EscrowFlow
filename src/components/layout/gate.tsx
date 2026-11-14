@@ -49,3 +49,26 @@ export function SignInGate({ children, title = "Sign in to continue", reason }: 
 export function PageContainer({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`mx-auto max-w-[1320px] px-4 py-8 sm:px-6 sm:py-10 ${className}`}>{children}</div>;
 }
+
+/** Connect (if needed) then sign in, in place — for walls and forms that need a session. */
+export function SignInInline({ label = "Sign in with wallet", variant = "primary" }: { label?: string; variant?: "primary" | "outline" | "secondary" }) {
+  const [open, setOpen] = useState(false);
+  const mounted = useMounted();
+  const { isConnected } = useAccount();
+  const { signIn, signing } = useSession();
+  if (!mounted) return null;
+  return (
+    <>
+      {isConnected ? (
+        <Button variant={variant} onClick={() => signIn()} loading={signing}>
+          <ShieldCheck className="size-4" aria-hidden /> {label}
+        </Button>
+      ) : (
+        <Button variant={variant} onClick={() => setOpen(true)}>
+          <Wallet className="size-4" aria-hidden /> Connect wallet
+        </Button>
+      )}
+      <ConnectDialog open={open} onOpenChange={setOpen} />
+    </>
+  );
+}

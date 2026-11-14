@@ -4,30 +4,103 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, FileCheck2, Gavel, Handshake, RotateCcw, Scale, ShieldAlert, Undo2, XCircle } from "lucide-react";
+import { CheckCircle2, FileCheck2, Gavel, Handshake, PiggyBank, RotateCcw, Scale, ShieldAlert, Undo2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/overlays";
 import { Field, Input, Notice, Textarea } from "@/components/ui/primitives";
-import { Amount } from "@/components/ui/chain";
+import { Amount, TxLink } from "@/components/ui/chain";
 import { useEscrowTx } from "@/hooks/useEscrowTx";
 import { api } from "@/lib/client/api";
 import type { ChainView, ProjectViewJson } from "@/lib/client/types";
-import { compareTermsWithChain, hashTerms, termsToParams } from "@/lib/terms";
-import { cancellationRefundPreview, milestoneActions, projectActions, type ActionState } from "@/lib/escrow-state";
+import { compareTermsWithChain, hashTerms, savingsOf, termsToParams } from "@/lib/terms";
+import { MilestoneStatus, cancellationRefundPreview, chainSavingsTerms, milestoneActions, projectActions, reviewDeadlineOf, roleOf, splitYield, type ActionState } from "@/lib/escrow-state";
 import { formatMusd, toDecimalString, tryParseMusd } from "@/lib/money";
 import { countdown, formatDate } from "@/lib/utils";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
+
+const pendingKey = (projectId: string) => `ef:create-tx:${projectId}`;
+const readPending = (projectId: string): `0x${string}` | null => {
+  try {
+    const v = localStorage.getItem(pendingKey(projectId));
+    return v && /^0x[0-9a-f]{64}$/i.test(v) ? (v as `0x${string}`) : null;
+  } catch {
+    return null;
+  }
+};
+const writePending = (projectId: string, hash: string | null) => {
+  try {
+    if (hash) localStorage.setItem(pendingKey(projectId), hash);
+    else localStorage.removeItem(pendingKey(projectId));
+  } catch {
+    // storage unavailable: the indexer still auto-links by terms hash
+  }
+};
+
+/** Polls /link until the server has verified the createProject / updateTerms receipt. */
+async function linkEscrow(projectId: string, hash: string): Promise<"confirmed" | "pending" | "error"> {
+  for (let i = 0; i < 8; i++) {
+    try {
+      const res = await api<{ status: string }>(`/api/projects/${projectId}/link`, { method: "POST", json: { txHash: hash } });
+      if (res.status === "confirmed") return "confirmed";
+    } catch (e) {
+      toast.error("Escrow created but linking failed", { description: e instanceof Error ? e.message : String(e) });
+      return "error";
+    }
+    await new Promise((r) => setTimeout(r, 2000 + i * 500));
+  }
+  return "pending";
+}
 
 /** Client: create the escrow on-chain from the saved terms, then link it server-side (verified). */
 export function CreateEscrowButton({ view, onDone }: { view: ProjectViewJson; onDone?: () => void }) {
   const tx = useEscrowTx();
   const qc = useQueryClient();
   const [linking, setLinking] = useState(false);
+  // Project data loads client-side, so reading localStorage in the initializer is hydration-safe.
+  const [pending, setPending] = useState<`0x${string}` | null>(() => readPending(view.project.id));
   const terms = view.terms;
   if (!terms) return null;
   const missingFreelancer = /^0x0{40}$/i.test(terms.freelancer);
   const deadlinesPassed = terms.milestones.some((m) => m.deadline <= nowSec());
+  const finish = async (hash: string) => {
+    setLinking(true);
+    const status = await linkEscrow(view.project.id, hash);
+    setLinking(false);
+    if (status === "confirmed") {
+      writePending(view.project.id, null);
+      setPending(null);
+      toast.success("Escrow created and linked", { description: "Share the invite link so the freelancer can review and accept the terms." });
+      onDone?.();
+    } else if (status === "pending") {
+      toast.message("Escrow sent; linking will finish automatically", { description: "The app links it as soon as the network confirms the transaction." });
+    }
+    await qc.invalidateQueries();
+  };
+  if (pending) {
+    // A createProject tx was already sent for this draft: offer to finish linking, never a second escrow.
+    return (
+      <div className="space-y-2">
+        <Notice tone="warning" title="An escrow creation is already on its way">
+          Transaction <TxLink hash={pending} /> was sent for this agreement. Wait for it to confirm instead of creating a second escrow.
+        </Notice>
+        <div className="flex flex-wrap gap-2">
+          <Button loading={linking} onClick={() => finish(pending)}>
+            Check and link it
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              writePending(view.project.id, null);
+              setPending(null);
+            }}
+          >
+            It failed, start over
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
       <Button
@@ -38,20 +111,9 @@ export function CreateEscrowButton({ view, onDone }: { view: ProjectViewJson; on
           const params = termsToParams(terms);
           const r = await tx.run({ label: "Create escrow", functionName: "createProject", args: [params], escrowFn: "createProject", milestoneCount: terms.milestones.length, verify: false });
           if (!r) return;
-          setLinking(true);
-          for (let i = 0; i < 6; i++) {
-            try {
-              const res = await api<{ status: string }>(`/api/projects/${view.project.id}/link`, { method: "POST", json: { txHash: r.hash } });
-              if (res.status === "confirmed") break;
-            } catch (e) {
-              toast.error("Escrow created but linking failed", { description: e instanceof Error ? e.message : String(e) });
-              break;
-            }
-            await new Promise((res) => setTimeout(res, 2000));
-          }
-          setLinking(false);
-          await qc.invalidateQueries();
-          onDone?.();
+          writePending(view.project.id, r.hash);
+          setPending(r.hash);
+          await finish(r.hash);
         }}
       >
         <FileCheck2 className="size-4" aria-hidden /> Create escrow on-chain
@@ -73,11 +135,8 @@ export function CommitTermsButton({ view, chainId }: { view: ProjectViewJson; ch
       onClick={async () => {
         const r = await tx.run({ label: "Commit new terms", functionName: "updateTerms", args: [chainId, termsToParams(terms)], escrowFn: "updateTerms", milestoneCount: terms.milestones.length, verify: false });
         if (!r) return;
-        try {
-          await api(`/api/projects/${view.project.id}/link`, { method: "POST", json: { txHash: r.hash } });
-        } catch (e) {
-          toast.error("Terms committed but verification failed", { description: e instanceof Error ? e.message : String(e) });
-        }
+        const status = await linkEscrow(view.project.id, r.hash);
+        if (status === "pending") toast.message("Terms sent; the app will record them once the network confirms.");
         await qc.invalidateQueries();
       }}
     >
@@ -91,7 +150,8 @@ export function AcceptTermsPanel({ view, chain }: { view: ProjectViewJson; chain
   const tx = useEscrowTx();
   const [confirm, setConfirm] = useState(false);
   const doc = view.onchainTerms;
-  const check = doc ? compareTermsWithChain(doc, chain.project, chain.milestones) : null;
+  const check = doc ? compareTermsWithChain(doc, chain.project, chain.milestones, chainSavingsTerms(chain)) : null;
+  const savings = doc ? savingsOf(doc) : null;
   const localHash = doc ? hashTerms(doc) : null;
   const ok = !!check?.ok && localHash?.toLowerCase() === chain.project.termsHash.toLowerCase();
   return (
@@ -153,6 +213,10 @@ export function AcceptTermsPanel({ view, chain }: { view: ProjectViewJson; chain
           <div className="flex justify-between">
             <dt className="text-mist-400">Client deadline reclaim</dt>
             <dd>{chain.project.deadlineReclaim ? "Yes" : "No"}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-mist-400">sMUSD savings while held</dt>
+            <dd>{savings?.enabled ? `On · ${savings.freelancerShareBps / 100}% of yield to you` : "Off"}</dd>
           </div>
         </dl>
       </Dialog>
@@ -217,9 +281,16 @@ export function SimpleTxButton({
 
 /** Mutual cancellation of a funded escrow, with an exact refund preview. */
 export function CancellationPanel({ chain, who }: { chain: ChainView; who?: string }) {
-  const pa = projectActions(chain.project, who, chain.milestones, nowSec());
+  const now = nowSec();
+  const pa = projectActions(chain.project, who, chain.milestones, now);
   const preview = cancellationRefundPreview(chain.milestones);
   const id = BigInt(chain.id);
+  // v2 asks for the exact refund we showed, so nothing can change between review and signature.
+  const acceptArgs = chain.version === 2 ? [id, preview.refund] : [id];
+  const vested = chain.project.autoRelease
+    ? chain.milestones.flatMap((m, i) => (m.status === MilestoneStatus.Submitted && now >= reviewDeadlineOf(m) ? [i] : []))
+    : [];
+  const isFreelancer = roleOf(chain.project, who) === "freelancer";
   const body = (
     <span>
       {preview.indexes.length > 0 ? (
@@ -230,13 +301,18 @@ export function CancellationPanel({ chain, who }: { chain: ChainView; who?: stri
       ) : (
         "No unpaid, undisputed milestones remain, so nothing would be refunded."
       )}
+      {isFreelancer && vested.length > 0 && (
+        <span className="mt-2 block text-warn-300">
+          Milestone {vested.map((i) => i + 1).join(", ")} can already be claimed after the unanswered review period. Claim it first: a cancellation would refund it to the client.
+        </span>
+      )}
     </span>
   );
   if (!pa.proposeCancellation.available && !pa.acceptCancellation.available && !pa.revokeCancellation.available) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       {pa.acceptCancellation.available && (
-        <SimpleTxButton label="Accept cancellation" fn="acceptCancellation" args={[id]} variant="danger" milestoneCount={chain.milestones.length} confirmTitle="Accept the cancellation?" confirmBody={body} icon={<XCircle className="size-4" />} />
+        <SimpleTxButton label="Accept cancellation" fn="acceptCancellation" args={acceptArgs} variant="danger" milestoneCount={chain.milestones.length} confirmTitle="Accept the cancellation?" confirmBody={body} icon={<XCircle className="size-4" />} />
       )}
       {pa.revokeCancellation.available && <SimpleTxButton label="Withdraw cancellation proposal" fn="revokeCancellation" args={[id]} variant="outline" icon={<Undo2 className="size-4" />} />}
       {pa.proposeCancellation.available && !pa.revokeCancellation.available && !pa.acceptCancellation.available && (
@@ -276,6 +352,7 @@ export function MilestoneActionBar({ view, chain, index, who, compact }: { view:
   const qc = useQueryClient();
   const [dlg, setDlg] = useState<null | "approve" | "changes" | "dispute" | "propose" | "arbiter">(null);
   const [note, setNote] = useState("");
+  const [savedNote, setSavedNote] = useState<{ kind: string; body: string; hash: `0x${string}` } | null>(null);
   const [split, setSplit] = useState("");
   const base = `/projects/${view.project.id}/milestones/${index}`;
   const title = view.terms?.milestones[index]?.title ?? `Milestone ${index + 1}`;
@@ -286,11 +363,17 @@ export function MilestoneActionBar({ view, chain, index, who, compact }: { view:
       return;
     }
     try {
-      const res = await api<{ noteHash: `0x${string}` }>(`/api/projects/${view.project.id}/notes`, { method: "POST", json: { kind, milestoneIndex: index, body: note, links: [] } });
-      const r = await tx.run({ label: fn === "requestChanges" ? "Request changes" : "Open dispute", functionName: fn, args: [id, BigInt(index), res.noteHash], escrowFn: fn });
+      let hash = savedNote && savedNote.kind === kind && savedNote.body === note ? savedNote.hash : null;
+      if (!hash) {
+        const res = await api<{ noteHash: `0x${string}` }>(`/api/projects/${view.project.id}/notes`, { method: "POST", json: { kind, milestoneIndex: index, body: note, links: [] } });
+        hash = res.noteHash;
+        setSavedNote({ kind, body: note, hash });
+      }
+      const r = await tx.run({ label: fn === "requestChanges" ? "Request changes" : "Open dispute", functionName: fn, args: [id, BigInt(index), hash], escrowFn: fn });
       if (r) {
         setDlg(null);
         setNote("");
+        setSavedNote(null);
         await qc.invalidateQueries();
       }
     } catch (e) {
@@ -364,7 +447,7 @@ export function MilestoneActionBar({ view, chain, index, who, compact }: { view:
           </Button>
         )}
         {a.withdrawDispute.available && (
-          <SimpleTxButton size={compact ? "sm" : "md"} label="Withdraw dispute" fn="withdrawDispute" args={[id, BigInt(index)]} variant="outline" confirmTitle="Withdraw your dispute?" confirmBody="The milestone returns to its previous state with a fresh review window or grace period." />
+          <SimpleTxButton size={compact ? "sm" : "md"} label="Withdraw dispute" fn="withdrawDispute" args={[id, BigInt(index)]} variant="outline" confirmTitle="Withdraw your dispute?" confirmBody="The milestone returns to its previous state. Its review window, deadline and grace period resume where they paused when the dispute opened." />
         )}
         {a.openDispute.available && !compact && (
           <Button variant="danger" onClick={() => setDlg("dispute")}>
@@ -398,8 +481,9 @@ export function MilestoneActionBar({ view, chain, index, who, compact }: { view:
         }
       >
         <p className="text-[13.5px] text-mist-300">
-          <strong className="text-white">{title}</strong> · recipient {chain.project.freelancer.slice(0, 10)}…
+          <strong className="text-white">{title}</strong>, paid to {chain.project.freelancer.slice(0, 10)}…
         </p>
+        {tx.busy && <p className="mt-2 text-[13px] text-signal-300">Approved. Payment pending until the network confirms the release.</p>}
       </Dialog>
 
       <Dialog
@@ -477,4 +561,53 @@ export function MilestoneActionBar({ view, chain, index, who, compact }: { view:
   );
 }
 
-
+/**
+ * v2 escrows that opted in park the held budget in Mezo's sMUSD savings vault (MUSDSavingsRate).
+ * Principal is withdrawn 1:1 for every payout; the yield it earned is split by the agreed share.
+ */
+export function SavingsPanel({ chain, who }: { chain: ChainView; who?: string }) {
+  const y = chain.yield;
+  if (chain.version !== 2 || !y?.enabled) return null;
+  const role = roleOf(chain.project, who);
+  const canDistribute = (role === "client" || role === "freelancer") && y.accrued > 0n;
+  const split = splitYield(y.accrued, y.freelancerBps);
+  return (
+    <div className="space-y-3">
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-ink-700 bg-ink-700 sm:grid-cols-3">
+        <div className="bg-ink-850 px-4 py-3">
+          <dt className="text-[12px] text-mist-400">In sMUSD now</dt>
+          <dd className="mt-1 text-[17px] font-semibold text-white">
+            <Amount wei={y.principal} />
+          </dd>
+        </div>
+        <div className="bg-ink-850 px-4 py-3">
+          <dt className="text-[12px] text-mist-400">Yield earned, unpaid</dt>
+          <dd className="mt-1 text-[17px] font-semibold text-signal-300">
+            <Amount wei={y.accrued} decimals={6} />
+          </dd>
+        </div>
+        <div className="col-span-2 bg-ink-850 px-4 py-3 sm:col-span-1">
+          <dt className="text-[12px] text-mist-400">Yield paid out</dt>
+          <dd className="mt-1 text-[17px] font-semibold text-white">
+            <Amount wei={y.paid} decimals={6} />
+          </dd>
+        </div>
+      </dl>
+      <p className="text-[12.5px] leading-relaxed text-mist-400">
+        Agreed split: {y.freelancerBps / 100}% of the yield to the freelancer, {(10_000 - y.freelancerBps) / 100}% to the client. The rate comes from Mezo&apos;s
+        MUSDSavingsRate vault and can be zero on testnet; the principal is always withdrawn 1:1 for payouts and refunds.
+      </p>
+      {canDistribute && (
+        <SimpleTxButton
+          label="Pay out yield"
+          fn="distributeYield"
+          args={[BigInt(chain.id)]}
+          variant="secondary"
+          icon={<PiggyBank className="size-4" />}
+          confirmTitle="Pay out the savings yield?"
+          confirmBody={`About ${formatMusd(split.freelancer, { maxDecimals: 6 })} MUSD to the freelancer and ${formatMusd(split.client, { maxDecimals: 6 })} MUSD to the client (exact amounts are measured when the transaction runs).`}
+        />
+      )}
+    </div>
+  );
+}

@@ -1,5 +1,7 @@
 "use client";
 
+import { formatDuration } from "@/lib/utils";
+
 import { use, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -166,7 +168,11 @@ function SubmitWork({ id, index }: { id: string; index: number }) {
             <Button size="lg" disabled={!can.available || description.trim().length < 10} loading={saving || tx.busy} onClick={submit}>
               {prepared ? "Submit on-chain" : "Save and submit on-chain"}
             </Button>
-            <p className="text-[12.5px] text-mist-500">Submitting starts the client&apos;s {Math.round(m.reviewPeriod / 3600)}-hour review period.</p>
+            <p className="text-[12.5px] text-mist-500">
+              {description.trim().length < 10 && !prepared
+                ? "Describe what you delivered (at least 10 characters) to continue."
+                : `Submitting starts the client's ${formatDuration(m.reviewPeriod)} review period.`}
+            </p>
           </div>
         </div>
       </Panel>

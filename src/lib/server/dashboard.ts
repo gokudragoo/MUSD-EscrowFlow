@@ -3,16 +3,7 @@ import type { Address } from "viem";
 import { query } from "./db";
 import { projectIdsFor, readProjects, type ChainSnapshot } from "./chain";
 import { chainEventTitle } from "./projects";
-import {
-  MilestoneStatus,
-  ProjectStatus,
-  deadlineState,
-  ledgerOf,
-  milestoneActions,
-  projectActions,
-  reviewDeadlineOf,
-  type ChainMilestone,
-} from "@/lib/escrow-state";
+import { MilestoneStatus, ProjectStatus, deadlineState, ledgerOf, milestoneActions, projectActions, reviewDeadlineOf, type ChainMilestone, effectiveDeadline } from "@/lib/escrow-state";
 import type { TermsDocument } from "@/lib/terms";
 
 interface Linked {
@@ -83,19 +74,21 @@ export async function buildDashboard(address: Address) {
       const ma = milestoneActions(s.project, ms, address, now);
       const role = s.project.client.toLowerCase() === me ? "client" : "freelancer";
       const mt = `M${i + 1} · ${m.milestoneTitle(i)}`;
+      // Milestone screens exist only for projects with an app record; public escrows link to the facts page.
+      const msHref = (sub = "") => (m.projectId ? `${m.href}/milestones/${i}${sub}` : m.href);
       if (ms.status === MilestoneStatus.Submitted) {
-        reviews.push({ title: m.title, milestone: mt, href: m.href, amount: ms.amount, reviewEndsAt: reviewDeadlineOf(ms), overdue: now >= reviewDeadlineOf(ms), role });
+        reviews.push({ title: m.title, milestone: mt, href: msHref(role === "client" ? "/review" : ""), amount: ms.amount, reviewEndsAt: reviewDeadlineOf(ms), overdue: now >= reviewDeadlineOf(ms), role });
       }
       if (ma.approve.available && ms.status === MilestoneStatus.Submitted) {
-        actions.push({ ...base, kind: "review", label: `Review ${mt}`, milestoneIndex: i, dueAt: reviewDeadlineOf(ms) });
+        actions.push({ ...base, href: msHref("/review"), kind: "review", label: `Review ${mt}`, milestoneIndex: i, dueAt: reviewDeadlineOf(ms) });
       }
-      if (ma.submit.available) actions.push({ ...base, kind: "submit", label: `Deliver ${mt}`, milestoneIndex: i, dueAt: Number(ms.deadline) });
-      if (ma.claimTimeout.available) actions.push({ ...base, kind: "claim", label: `Claim ${mt} — review period elapsed`, milestoneIndex: i, dueAt: null });
-      if (ma.acceptSettlement.available) actions.push({ ...base, kind: "settlement", label: `Respond to the settlement offer on ${mt}`, milestoneIndex: i, dueAt: null });
-      if (ma.reclaim.available) actions.push({ ...base, kind: "reclaim", label: `Reclaim ${mt} — deadline passed without delivery`, milestoneIndex: i, dueAt: null });
+      if (ma.submit.available) actions.push({ ...base, href: msHref("/submit"), kind: "submit", label: `Deliver ${mt}`, milestoneIndex: i, dueAt: effectiveDeadline(ms) });
+      if (ma.claimTimeout.available) actions.push({ ...base, href: msHref(), kind: "claim", label: `Claim ${mt} — review period elapsed`, milestoneIndex: i, dueAt: null });
+      if (ma.acceptSettlement.available) actions.push({ ...base, href: msHref(), kind: "settlement", label: `Respond to the settlement offer on ${mt}`, milestoneIndex: i, dueAt: null });
+      if (ma.reclaim.available) actions.push({ ...base, href: msHref(), kind: "reclaim", label: `Reclaim ${mt} — deadline passed without delivery`, milestoneIndex: i, dueAt: null });
       if (isActive(s)) {
         const ds = deadlineState(ms, now, 7 * 86_400);
-        if (ds !== "none") deadlines.push({ title: m.title, milestone: mt, href: m.href, dueAt: Number(ms.deadline), state: ds, role, amount: ms.amount });
+        if (ds !== "none") deadlines.push({ title: m.title, milestone: mt, href: msHref(), dueAt: effectiveDeadline(ms), state: ds, role, amount: ms.amount });
       }
       if (ms.status === MilestoneStatus.Disputed) {
         disputes.push({ title: m.title, milestone: mt, href: m.href, amount: ms.amount, openedAt: Number(ms.disputedAt) });

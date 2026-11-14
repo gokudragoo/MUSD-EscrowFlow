@@ -5,7 +5,7 @@ import { readProjects } from "@/lib/server/chain";
 import { syncChainEvents } from "@/lib/server/indexer";
 import { notify } from "@/lib/server/records";
 import { serverEnv } from "@/lib/server/env";
-import { MilestoneStatus, ProjectStatus, reviewDeadlineOf } from "@/lib/escrow-state";
+import { MilestoneStatus, ProjectStatus, effectiveDeadline, reviewDeadlineOf } from "@/lib/escrow-state";
 import type { TermsDocument } from "@/lib/terms";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     const rows = await query<{ id: string; title: string; chain_project_id: string; terms: TermsDocument }>(
       `select id, title, chain_project_id::text as chain_project_id, terms from escrowflow.projects where chain_project_id is not null`,
     );
-    const snaps = await readProjects(rows.map((r) => BigInt(r.chain_project_id)));
+    const snaps = await readProjects(rows.map((r) => BigInt(r.chain_project_id)), 2_000);
     const now = Math.floor(Date.now() / 1000);
     const day = new Date().toISOString().slice(0, 10);
     let sent = 0;
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
       const href = `/projects/${row.id}`;
       for (const [i, m] of snap.milestones.entries()) {
         const label = `M${i + 1} · ${row.terms.milestones[i]?.title ?? "Milestone"}`;
-        const deadline = Number(m.deadline);
+        const deadline = effectiveDeadline(m);
         if ((m.status === MilestoneStatus.Pending || m.status === MilestoneStatus.ChangesRequested) && deadline > now && deadline - now <= 2 * 86_400) {
           for (const to of [snap.project.freelancer, snap.project.client]) {
             await notify({ recipient: to, kind: "deadline", title: `Deadline approaching: ${label}`, body: `${row.title} · due ${new Date(deadline * 1000).toUTCString()}`, href, source: "reminder", dedupeKey: `rem:due:${snap.id}:${i}:${day}:${to}` });

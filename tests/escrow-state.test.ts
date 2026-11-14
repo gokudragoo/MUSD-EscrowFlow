@@ -13,6 +13,7 @@ import {
   reconcile,
   reviewOverdue,
   roleOf,
+  splitYield,
   type ChainMilestone,
   type ChainProject,
 } from "@/lib/escrow-state";
@@ -67,6 +68,7 @@ function ms(amount: string, over: Partial<ChainMilestone> = {}): ChainMilestone 
     submissionHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
     releasedAmount: 0n,
     refundedAmount: 0n,
+    pausedFor: 0n,
     ...over,
   };
 }
@@ -252,5 +254,28 @@ describe("deadline warnings", () => {
     expect(reviewOverdue(s, NOW)).toBe(true);
     expect(reviewOverdue({ ...s, submittedAt: BigInt(NOW) }, NOW)).toBe(false);
     expect(reviewOverdue({ ...s, status: M.Released }, NOW)).toBe(false);
+  });
+});
+
+describe("v2 rules mirrored from the audit fixes", () => {
+  it("a freelancer cannot dispute a milestone they never submitted; the client still can", () => {
+    const pending = ms("40");
+    expect(milestoneActions(project(), pending, FREELANCER, NOW).openDispute.available).toBe(false);
+    expect(milestoneActions(project(), pending, CLIENT, NOW).openDispute.available).toBe(true);
+    expect(milestoneActions(project(), { ...pending, revision: 1, status: M.ChangesRequested }, FREELANCER, NOW).openDispute.available).toBe(true);
+  });
+
+  it("time spent in a withdrawn dispute pushes reclaim and deadline warnings back", () => {
+    const m = ms("40", { deadline: BigInt(NOW - 3_600) });
+    const paused = { ...m, pausedFor: 7_200n };
+    expect(reclaimAvailableAt(project(), paused)).toBe(reclaimAvailableAt(project(), m) + 7_200);
+    expect(deadlineState(m, NOW)).toBe("overdue");
+    expect(deadlineState(paused, NOW)).not.toBe("overdue");
+  });
+
+  it("splits savings yield like the contract (freelancer share rounds down)", () => {
+    expect(splitYield(101n, 5000)).toEqual({ freelancer: 50n, client: 51n });
+    expect(splitYield(1000n, 0)).toEqual({ freelancer: 0n, client: 1000n });
+    expect(splitYield(1000n, 10_000)).toEqual({ freelancer: 1000n, client: 0n });
   });
 });

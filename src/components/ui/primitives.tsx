@@ -22,7 +22,7 @@ export function PageHeader({ title, description, actions, eyebrow }: { title: Re
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0 max-w-3xl">
         {eyebrow && <div className="mb-2 text-[13px] text-mist-400">{eyebrow}</div>}
-        <h1 className="text-[26px] font-semibold leading-tight tracking-[-0.01em] text-white sm:text-[30px]">{title}</h1>
+        <h1 className="display text-[28px] leading-tight text-white sm:text-[32px]">{title}</h1>
         {description && <p className="mt-2 text-[15px] leading-relaxed text-mist-300">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -33,14 +33,15 @@ export function PageHeader({ title, description, actions, eyebrow }: { title: Re
 type BadgeTone = "neutral" | "held" | "released" | "refunded" | "warning" | "danger" | "info" | "signal";
 
 const badgeTones: Record<BadgeTone, string> = {
-  neutral: "bg-ink-700/80 text-mist-300 border-ink-600",
-  held: "bg-held-500/15 text-held-300 border-held-400/35",
-  released: "bg-paid-400/12 text-paid-300 border-paid-400/35",
-  refunded: "bg-refund-400/12 text-mist-300 border-refund-400/30",
-  warning: "bg-warn-400/12 text-warn-300 border-warn-400/35",
-  danger: "bg-danger-400/12 text-danger-300 border-danger-400/35",
-  info: "bg-signal-500/12 text-signal-300 border-signal-400/35",
-  signal: "bg-signal-500/15 text-signal-300 border-signal-400/40",
+  neutral: "bg-ink-700/70 text-mist-300 border-ink-600",
+  held: "bg-held-400/10 text-held-300 border-held-400/30",
+  // Paid is the only solid pill: money that actually moved.
+  released: "bg-paid-400 text-ink-950 border-paid-400",
+  refunded: "bg-transparent text-mist-400 border-ink-500",
+  warning: "bg-warn-400/10 text-warn-300 border-warn-400/40",
+  danger: "bg-danger-400/12 text-danger-300 border-danger-400/45",
+  info: "bg-transparent text-mist-100 border-mist-400/50",
+  signal: "bg-signal-500/12 text-signal-300 border-signal-400/40",
 };
 
 export function Badge({ tone = "neutral", className, children, dot }: { tone?: BadgeTone; className?: string; children: ReactNode; dot?: boolean }) {
@@ -72,7 +73,7 @@ export function Field({ label, hint, error, children, htmlFor, optional }: { lab
 }
 
 const control =
-  "w-full rounded-[10px] border border-ink-600 bg-ink-950/60 px-3 text-[14px] text-mist-50 placeholder:text-mist-500 transition-colors focus:border-signal-400 focus:outline-none focus:ring-2 focus:ring-signal-500/25 disabled:opacity-60 aria-[invalid=true]:border-danger-400/70";
+  "w-full rounded-[8px] border border-ink-600 bg-ink-950/60 px-3 text-[14px] text-mist-50 placeholder:text-mist-500 transition-colors focus:border-signal-400 focus:outline-none focus:ring-2 focus:ring-signal-500/20 disabled:opacity-60 aria-[invalid=true]:border-danger-400/70";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...p }, ref) {
   return <input ref={ref} className={cn(control, "h-10", className)} {...p} />;
@@ -84,7 +85,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...p }, ref) {
   return (
-    <select ref={ref} className={cn(control, "h-10 appearance-none bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-9", className)} style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f9dbe' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")" }} {...p}>
+    <select ref={ref} className={cn(control, "h-10 appearance-none bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-9", className)} style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2395a0b2' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")" }} {...p}>
       {children}
     </select>
   );
@@ -97,7 +98,7 @@ export function Skeleton({ className }: { className?: string }) {
 export function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title: ReactNode; description?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
-      {icon && <div className="mb-4 grid size-12 place-items-center rounded-2xl border border-ink-600 bg-ink-800 text-mist-300">{icon}</div>}
+      {icon && <div className="mb-4 grid size-12 place-items-center rounded-full border border-ink-600 text-mist-300">{icon}</div>}
       <h3 className="text-[15px] font-semibold text-white">{title}</h3>
       {description && <p className="mt-1.5 max-w-md text-[14px] leading-relaxed text-mist-400">{description}</p>}
       {action && <div className="mt-5">{action}</div>}
@@ -111,14 +112,14 @@ export function Kbd({ children }: { children: ReactNode }) {
 
 export function Notice({ tone = "info", title, children, icon, className }: { tone?: "info" | "warning" | "danger" | "success"; title?: ReactNode; children?: ReactNode; icon?: ReactNode; className?: string }) {
   const tones = {
-    info: "border-signal-400/30 bg-signal-500/[0.07] text-mist-100",
-    warning: "border-warn-400/35 bg-warn-400/[0.07] text-mist-100",
-    danger: "border-danger-400/35 bg-danger-400/[0.07] text-mist-100",
-    success: "border-paid-400/35 bg-paid-400/[0.07] text-mist-100",
+    info: "border-ink-600 bg-ink-800/70 text-mist-100",
+    warning: "border-warn-400/40 bg-warn-400/[0.06] text-mist-100",
+    danger: "border-danger-400/45 bg-danger-400/[0.07] text-mist-100",
+    success: "border-paid-400/40 bg-paid-400/[0.06] text-mist-100",
   } as const;
-  const iconTone = { info: "text-signal-300", warning: "text-warn-300", danger: "text-danger-300", success: "text-paid-300" } as const;
+  const iconTone = { info: "text-mist-300", warning: "text-warn-300", danger: "text-danger-300", success: "text-paid-300" } as const;
   return (
-    <div className={cn("flex gap-3 rounded-[12px] border px-4 py-3 text-[13.5px] leading-relaxed", tones[tone], className)}>
+    <div className={cn("flex gap-3 rounded-[10px] border px-4 py-3 text-[13.5px] leading-relaxed", tones[tone], className)}>
       {icon && <div className={cn("mt-0.5 shrink-0", iconTone[tone])}>{icon}</div>}
       <div className="min-w-0">
         {title && <div className="font-semibold text-white">{title}</div>}

@@ -20,6 +20,22 @@ export const notFound = (msg = "Not found") => new HttpError(404, msg, "not_foun
 export const conflict = (msg: string, details?: unknown) => new HttpError(409, msg, "conflict", details);
 
 /** JSON with bigint support (bigints serialised as decimal strings). */
+/**
+ * Reads multipart form data only after checking the declared size, so an oversized upload is refused
+ * before it is buffered (Vercel also caps request bodies at 4.5 MB).
+ */
+export async function readForm(req: NextRequest, maxBytes = 4_500_000): Promise<FormData> {
+  const declared = Number(req.headers.get("content-length") ?? "NaN");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new HttpError(413, `Upload too large: keep the whole request under ${Math.floor(maxBytes / 1_000_000)} MB`, "payload_too_large");
+  }
+  try {
+    return await req.formData();
+  } catch {
+    throw badRequest("Expected a multipart form upload");
+  }
+}
+
 export function json(data: unknown, init: ResponseInit = {}) {
   const body = JSON.stringify(data, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
   const headers = new Headers(init.headers);

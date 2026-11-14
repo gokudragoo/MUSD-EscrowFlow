@@ -13,8 +13,31 @@ export interface NotifyInput {
   dedupeKey: string;
 }
 
-/** Inserts a notification once (dedupe_key is UNIQUE). */
+/** Which profile preference (Settings → Notifications) governs each notification kind. */
+const PREF_FOR_KIND: Record<string, "deadlines" | "reviews" | "payments" | "disputes" | "marketplace" | undefined> = {
+  deadline: "deadlines",
+  reminder: "deadlines",
+  review: "reviews",
+  payment: "payments",
+  refund: "payments",
+  dispute: "disputes",
+  application: "marketplace",
+  invitation: "marketplace",
+};
+
+/**
+ * Inserts a notification once (dedupe_key is UNIQUE), unless the recipient turned that kind off.
+ * Funding, terms, cancellation and completion notices always go out: they change what a party owes.
+ */
 export async function notify(n: NotifyInput) {
+  const pref = PREF_FOR_KIND[n.kind];
+  if (pref) {
+    const row = await query<{ off: boolean }>(
+      `select (notification_prefs ->> $2) = 'false' as off from escrowflow.profiles where address = $1`,
+      [n.recipient.toLowerCase(), pref],
+    );
+    if (row[0]?.off) return;
+  }
   await query(
     `insert into escrowflow.notifications (id, recipient, kind, title, body, href, source, tx_hash, dedupe_key)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (dedupe_key) do nothing`,

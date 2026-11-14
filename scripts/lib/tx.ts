@@ -25,8 +25,8 @@ import { mezoTestnet } from "../../src/config/chains";
 import { isRetryableTxError, withGasBuffer } from "../../src/lib/gas";
 
 export const DEFAULT_DEPLOYER_ENV_FILE = "C:\\Users\\nikku\\Desktop\\.env.txt";
-export const DEFAULT_TEST_WALLETS_FILE =
-  "C:\\Users\\nikku\\AppData\\Local\\Temp\\claude\\C--Users-nikku-Desktop\\120e793a-eda2-49e5-92e3-e45940332298\\scratchpad\\test-wallets.json";
+/** Throwaway testnet wallets (client / freelancer / stranger), kept outside the repo in a stable folder. */
+export const DEFAULT_TEST_WALLETS_FILE = "C:\\Users\\nikku\\.escrowflow\\test-wallets.json";
 
 function normalizeKey(raw: string): Hex {
   const k = raw.trim().replace(/^['"]|['"]$/g, "");
@@ -102,6 +102,8 @@ export interface SendOptions {
   label: string;
   /** Broadcast without estimating (used to record an intentionally reverting tx on-chain). */
   skipEstimate?: boolean;
+  /** Native BTC to send (gas top-ups, payable calls such as openTrove). */
+  value?: bigint;
 }
 
 /** Sign + broadcast with explicit gas/nonce, retrying transient and nonce errors (max 5). */
@@ -112,7 +114,7 @@ export async function sendRaw(opts: SendOptions): Promise<{ hash: Hex; receipt: 
     try {
       let estimate: bigint | null = null;
       if (!opts.skipEstimate) try {
-        estimate = await publicClient.estimateGas({ account: opts.account, to: opts.to, data: opts.data });
+        estimate = await publicClient.estimateGas({ account: opts.account, to: opts.to, data: opts.data, value: opts.value });
       } catch (e) {
         // Estimation failure on a deploy/contract call: surface reverts, otherwise fall back to floor.
         const msg = e instanceof Error ? e.message : String(e);
@@ -128,6 +130,7 @@ export async function sendRaw(opts: SendOptions): Promise<{ hash: Hex; receipt: 
         chain: mezoTestnet,
         to: opts.to,
         data: opts.data,
+        value: opts.value,
         gas,
         nonce,
         gasPrice: gasPrice * 2n,

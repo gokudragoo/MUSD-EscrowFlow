@@ -9,6 +9,7 @@ import { getProjectRow, revisionForHash } from "@/lib/server/projects";
 import { ingestEvents, verifyEscrowTx } from "@/lib/server/indexer";
 import { audit } from "@/lib/server/records";
 import { compareTermsWithChain } from "@/lib/terms";
+import { chainSavingsTerms } from "@/lib/escrow-state";
 import { txHashSchema } from "@/lib/validation";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ export const POST = route(async (req: NextRequest, ctx: Ctx) => {
   const committedHash = String(termsSet.args.termsHash);
   const rev = await revisionForHash(id, committedHash);
   if (!rev) throw badRequest("The on-chain terms hash does not match any saved revision of this agreement");
-  const check = compareTermsWithChain(rev.terms, snap.project, snap.milestones);
+  const check = compareTermsWithChain(rev.terms, snap.project, snap.milestones, chainSavingsTerms(snap));
   // If terms were edited again after this tx, the latest on-chain hash may differ — only check the committed one.
   if (snap.project.termsHash.toLowerCase() === committedHash.toLowerCase() && !check.ok) {
     throw badRequest(`On-chain parameters differ from the agreement: ${check.mismatches.join("; ")}`);

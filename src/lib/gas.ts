@@ -26,29 +26,33 @@ export type EscrowWrite =
   | "withdrawDispute"
   | "proposeCancellation"
   | "revokeCancellation"
-  | "acceptCancellation";
+  | "acceptCancellation"
+  | "distributeYield";
 
+// v2 floors include the Mezo sMUSD vault round trip (deposit on funding, withdraw on every payout)
+// for escrows that opted into savings; plain escrows simply use less of the limit.
 const BASE_FLOORS: Record<EscrowWrite, bigint> = {
-  createProject: 450_000n,
-  updateTerms: 450_000n,
+  createProject: 520_000n,
+  updateTerms: 520_000n,
   acceptTerms: 150_000n,
   revokeAcceptance: 120_000n,
   cancelUnfunded: 120_000n,
-  fund: 320_000n,
-  fundWithPermit: 380_000n,
+  fund: 750_000n,
+  fundWithPermit: 820_000n,
   submitMilestone: 220_000n,
   requestChanges: 160_000n,
-  approveAndRelease: 260_000n,
-  claimAfterReviewTimeout: 260_000n,
-  reclaimExpiredMilestone: 260_000n,
-  openDispute: 220_000n,
+  approveAndRelease: 650_000n,
+  claimAfterReviewTimeout: 650_000n,
+  reclaimExpiredMilestone: 650_000n,
+  openDispute: 230_000n,
   proposeSettlement: 160_000n,
-  acceptSettlement: 320_000n,
-  arbiterResolve: 320_000n,
-  withdrawDispute: 160_000n,
+  acceptSettlement: 720_000n,
+  arbiterResolve: 720_000n,
+  withdrawDispute: 180_000n,
   proposeCancellation: 130_000n,
   revokeCancellation: 110_000n,
-  acceptCancellation: 320_000n,
+  acceptCancellation: 720_000n,
+  distributeYield: 480_000n,
 };
 
 /** Extra floor per milestone for functions whose cost scales with milestone count. */

@@ -1,7 +1,7 @@
 import "server-only";
 import { getAddress, zeroAddress, type Address } from "viem";
 import { compareTermsWithChain, hashTerms, type TermsDocument } from "@/lib/terms";
-import { ledgerOf, reconcile, roleOf } from "@/lib/escrow-state";
+import { chainSavingsTerms, ledgerOf, reconcile, roleOf } from "@/lib/escrow-state";
 import { one, query } from "./db";
 import { forbidden, notFound } from "./http";
 import { readProject, type ChainSnapshot } from "./chain";
@@ -31,8 +31,11 @@ export const PROJECT_COLUMNS = `id, client_address, freelancer_address, title, s
   milestone_count, final_deadline, hiring_mode, listing_status, terms, terms_hash, chain_project_id::text as chain_project_id,
   create_tx_hash, created_at, updated_at`;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const isUuid = (v: string) => UUID_RE.test(v);
+
 export async function getProjectRow(id: string): Promise<ProjectRow | null> {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  if (!isUuid(id)) return null;
   return one<ProjectRow>(`select ${PROJECT_COLUMNS} from escrowflow.projects where id = $1`, [id]);
 }
 
@@ -44,18 +47,28 @@ export type Access = "client" | "freelancer" | "arbiter" | "applicant" | "public
 
 const eq = (a?: string | null, b?: string | null) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
-/** Who is asking, relative to this project (DB parties + on-chain parties). */
+/**
+ * Who is asking, relative to this project. Once an escrow is linked the contract alone decides who
+ * the freelancer and arbiter are (the editable DB draft can drift from what was committed on-chain).
+ * The client never changes: /link requires the DB client to equal the on-chain client.
+ */
 export async function accessOf(row: ProjectRow, chain: ChainSnapshot | null, viewer: Address | null): Promise<Access> {
   if (!viewer) return "public";
   if (eq(row.client_address, viewer) || (chain && eq(chain.project.client, viewer))) return "client";
-  if (eq(row.freelancer_address, viewer) || (chain && eq(chain.project.freelancer, viewer))) return "freelancer";
-  if (chain && chain.project.arbiter !== zeroAddress && eq(chain.project.arbiter, viewer)) return "arbiter";
-  if (row.terms.rules.arbiter && eq(row.terms.rules.arbiter, viewer)) return "arbiter";
-  const app = await one(`select 1 from escrowflow.applications where project_id = $1 and freelancer_address = $2`, [
+  if (chain) {
+    if (eq(chain.project.freelancer, viewer)) return "freelancer";
+    if (chain.project.arbiter !== zeroAddress && eq(chain.project.arbiter, viewer)) return "arbiter";
+  } else if (!row.chain_project_id) {
+    if (eq(row.freelancer_address, viewer)) return "freelancer";
+    if (row.terms.rules.arbiter && eq(row.terms.rules.arbiter, viewer)) return "arbiter";
+  }
+  // Applicants see the listing terms only while it is open and their application is live.
+  if (row.listing_status !== "open") return "public";
+  const app = await one<{ status: string }>(`select status from escrowflow.applications where project_id = $1 and freelancer_address = $2`, [
     row.id,
     viewer.toLowerCase(),
   ]);
-  return app ? "applicant" : "public";
+  return app && (app.status === "submitted" || app.status === "selected") ? "applicant" : "public";
 }
 
 export const isParty = (a: Access) => a === "client" || a === "freelancer" || a === "arbiter";
@@ -99,6 +112,10 @@ const EVENT_TITLES: Record<string, string> = {
   CancellationRevoked: "Cancellation proposal withdrawn",
   ProjectCancelled: "Project cancelled",
   ProjectClosed: "Project closed",
+  YieldTermsSet: "Savings terms recorded on-chain",
+  SavingsDeposited: "Budget deposited into sMUSD savings",
+  SavingsWithdrawn: "Withdrawn from sMUSD for settlement",
+  YieldDistributed: "Savings yield paid out",
 };
 
 export interface ChainEventRow {
@@ -197,6 +214,15 @@ function describeArgs(name: string, a: Record<string, string | number | boolean>
       return a.wasFunded ? `${musd(a.refundedAmount)} refunded` : "Before funding";
     case "ProjectClosed":
       return Number(a.finalStatus) === 4 ? "Completed" : "Cancelled";
+    case "YieldTermsSet":
+      return a.enabled ? `Held MUSD earns the sMUSD savings rate · ${Number(a.freelancerYieldBps) / 100}% of yield to the freelancer` : "Savings off";
+    case "SavingsDeposited":
+    case "SavingsWithdrawn":
+      return `${musd(a.amount)} (Mezo MUSDSavingsRate vault, 1:1 principal)`;
+    case "YieldDistributed":
+      return `${musd(a.freelancerAmount)} to freelancer · ${musd(a.clientAmount)} to client`;
+    case "DisputeWithdrawn":
+      return Number(a.pausedSeconds ?? 0) > 0 ? `Clocks paused for ${Math.round(Number(a.pausedSeconds) / 60)} min during the dispute` : undefined;
     default:
       return undefined;
   }
@@ -233,7 +259,7 @@ export async function projectView(row: ProjectRow, viewer: Address | null) {
     const rev = await revisionForHash(row.id, chain.project.termsHash);
     onchainTerms = rev?.terms ?? null;
     termsCheck = rev
-      ? compareTermsWithChain(rev.terms, chain.project, chain.milestones)
+      ? compareTermsWithChain(rev.terms, chain.project, chain.milestones, chainSavingsTerms(chain))
       : { ok: false, mismatches: ["No stored terms document matches the on-chain terms hash"] };
   }
   const draftDiffers = chain ? row.terms_hash.toLowerCase() !== chain.project.termsHash.toLowerCase() : false;
@@ -289,8 +315,11 @@ export function serializeChain(c: ChainSnapshot) {
   return {
     id: c.id.toString(),
     blockNumber: c.blockNumber.toString(),
+    escrow: c.escrow,
+    version: c.version,
     project: c.project,
     milestones: c.milestones,
+    yield: c.yield,
     ledger,
     reconciliation: rec,
   };

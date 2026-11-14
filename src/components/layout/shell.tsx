@@ -7,6 +7,7 @@ import { Command } from "cmdk";
 import { useQuery } from "@tanstack/react-query";
 import { useBlockNumber } from "wagmi";
 import {
+  Activity,
   Bell,
   BookOpen,
   Briefcase,
@@ -24,7 +25,7 @@ import {
   Coins,
   Network,
 } from "lucide-react";
-import { ConnectButton, NetworkGuard, useWalletHelpers } from "@/components/wallet/wallet";
+import { ConnectButton, NetworkGuard, SessionGuard, useWalletHelpers } from "@/components/wallet/wallet";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/primitives";
 import { useSession } from "@/hooks/useSession";
@@ -37,6 +38,7 @@ export const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: Briefcase },
   { href: "/marketplace", label: "Marketplace", icon: Store },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/payments", label: "Payments", icon: CreditCard },
   { href: "/disputes", label: "Disputes", icon: Scale },
   { href: "/help", label: "Help", icon: BookOpen },
@@ -46,12 +48,12 @@ export function Logo({ className }: { className?: string }) {
   return (
     <Link href="/" className={cn("flex items-center gap-2.5 text-white", className)} aria-label="MUSD EscrowFlow home">
       <svg viewBox="0 0 32 32" className="size-7" aria-hidden>
-        <rect x="1" y="1" width="30" height="30" rx="9" fill="#111b37" stroke="#34477a" />
-        <circle cx="16" cy="16" r="8.5" fill="none" stroke="#8b83ff" strokeWidth="2.2" strokeDasharray="13 3.6" />
-        <circle cx="16" cy="16" r="4" fill="#2fc6f6" />
-        <path d="M20.5 16h7" stroke="#2fc6f6" strokeWidth="2.2" strokeLinecap="round" />
+        <rect x="1" y="1" width="30" height="30" rx="8" fill="#17202f" stroke="#314058" />
+        <rect x="6" y="14" width="8" height="4" rx="1.5" fill="#d4a548" />
+        <rect x="16" y="14" width="5" height="4" rx="1.5" fill="#aab4c4" />
+        <rect x="23" y="14" width="3" height="4" rx="1.5" fill="#aab4c4" fillOpacity="0.55" />
       </svg>
-      <span className="text-[15px] font-semibold tracking-[-0.01em]">
+      <span className="whitespace-nowrap text-[15px] font-semibold tracking-[-0.01em]">
         EscrowFlow <span className="font-normal text-mist-400">MUSD</span>
       </span>
     </Link>
@@ -62,7 +64,7 @@ export function TestnetBadge() {
   return (
     <Link
       href="/help#testnet"
-      className="hidden items-center gap-1.5 rounded-full border border-warn-400/35 bg-warn-400/10 px-2.5 py-1 text-[12px] font-medium text-warn-300 sm:inline-flex"
+      className="hidden items-center gap-1.5 rounded-full border border-ink-600 px-2.5 py-1 text-[12px] font-medium text-mist-300 hover:text-white sm:inline-flex"
       title="Mezo Testnet — test tokens have no monetary value"
     >
       <span className="size-1.5 rounded-full bg-warn-400" aria-hidden /> Testnet
@@ -81,10 +83,10 @@ function NotificationBell() {
   if (!isSignedIn) return null;
   const unread = q.data?.unread ?? 0;
   return (
-    <Link href="/notifications" className="relative grid size-9 place-items-center rounded-[10px] border border-ink-600 bg-ink-800 text-mist-300 hover:text-white" aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}>
+    <Link href="/notifications" className="relative grid size-9 place-items-center rounded-[8px] border border-ink-600 bg-ink-800 text-mist-300 hover:text-white" aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}>
       <Bell className="size-4" />
       {unread > 0 && (
-        <span className="amount absolute -right-1 -top-1 min-w-[18px] rounded-full bg-signal-500 px-1 text-center text-[10.5px] font-semibold leading-[18px] text-white">{unread > 99 ? "99+" : unread}</span>
+        <span className="amount absolute -right-1 -top-1 min-w-[18px] rounded-full bg-signal-500 px-1 text-center text-[10.5px] font-semibold leading-[18px] text-ink-950">{unread > 99 ? "99+" : unread}</span>
       )}
     </Link>
   );
@@ -107,11 +109,11 @@ export function SiteHeader() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   return (
-    <header className="no-print sticky top-0 z-40 border-b border-ink-700/80 bg-ink-900/85 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-[1320px] items-center gap-4 px-4 sm:px-6">
+    <header className="no-print sticky top-0 z-40 border-b border-ink-700 bg-ink-900">
+      <div className="mx-auto flex h-16 max-w-[1320px] items-center gap-3 px-4 sm:px-6">
         <Logo />
         <TestnetBadge />
-        <nav className="ml-4 hidden items-center gap-0.5 lg:flex" aria-label="Main">
+        <nav className="ml-2 hidden items-center gap-0.5 xl:flex" aria-label="Main">
           {NAV.map((n) => {
             const active = pathname === n.href || pathname.startsWith(n.href + "/");
             return (
@@ -119,7 +121,7 @@ export function SiteHeader() {
                 key={n.href}
                 href={n.href}
                 aria-current={active ? "page" : undefined}
-                className={cn("rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors", active ? "bg-ink-750 text-white" : "text-mist-400 hover:text-white")}
+                className={cn("whitespace-nowrap rounded-[8px] px-2.5 py-2 text-[13.5px] font-medium transition-colors", active ? "bg-ink-750 text-white" : "text-mist-400 hover:text-white")}
               >
                 {n.label}
               </Link>
@@ -129,25 +131,26 @@ export function SiteHeader() {
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => setPalette(true)}
-            className="hidden h-9 items-center gap-2 rounded-[10px] border border-ink-600 bg-ink-800 px-3 text-[13px] text-mist-400 hover:text-white md:flex"
+            className="hidden h-9 items-center gap-2 whitespace-nowrap rounded-[8px] border border-ink-600 bg-ink-800 px-2.5 text-[13px] text-mist-400 hover:text-white md:flex"
             aria-label="Open command palette"
+            title="Search (Ctrl K)"
           >
-            <Search className="size-3.5" /> Search <Kbd>Ctrl K</Kbd>
+            <Search className="size-3.5" aria-hidden /> <span className="hidden 2xl:inline">Search</span> <span className="hidden 2xl:inline"><Kbd>Ctrl K</Kbd></span>
           </button>
           <Link href="/projects/new" className="hidden sm:block">
-            <Button size="sm" variant="secondary">
+            <Button size="sm" variant="secondary" className="whitespace-nowrap">
               <Plus className="size-4" aria-hidden /> New project
             </Button>
           </Link>
           <NotificationBell />
           <ConnectButton size="sm" />
-          <button className="grid size-9 place-items-center rounded-[10px] border border-ink-600 text-mist-300 lg:hidden" onClick={() => setMenu((m) => !m)} aria-label="Menu" aria-expanded={menu}>
+          <button className="grid size-9 shrink-0 place-items-center rounded-[8px] border border-ink-600 text-mist-300 xl:hidden" onClick={() => setMenu((m) => !m)} aria-label="Menu" aria-expanded={menu}>
             {menu ? <X className="size-4" /> : <Menu className="size-4" />}
           </button>
         </div>
       </div>
       {menu && (
-        <nav className="border-t border-ink-700 bg-ink-900 px-4 py-3 lg:hidden" aria-label="Mobile">
+        <nav className="border-t border-ink-700 bg-ink-900 px-4 py-3 xl:hidden" aria-label="Mobile">
           {[...NAV, { href: "/projects/new", label: "New project", icon: Plus }, { href: "/settings", label: "Settings", icon: Settings }].map((n) => (
             <Link key={n.href} href={n.href} className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-mist-100 hover:bg-ink-800">
               <n.icon className="size-4 text-mist-400" aria-hidden /> {n.label}
@@ -156,6 +159,7 @@ export function SiteHeader() {
         </nav>
       )}
       <NetworkGuard />
+      <SessionGuard />
       <CommandPalette open={palette} onOpenChange={setPalette} />
     </header>
   );
@@ -177,7 +181,7 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
   };
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-start bg-ink-950/70 px-4 pt-[12vh] backdrop-blur-[3px]" onClick={() => onOpenChange(false)}>
+    <div className="fixed inset-0 z-50 grid place-items-start bg-ink-950/80 px-4 pt-[12vh]" onClick={() => onOpenChange(false)}>
       <Command
         label="Command palette"
         className="panel-raised mx-auto w-full max-w-xl overflow-hidden"
@@ -234,7 +238,7 @@ function PaletteItem({ children, onSelect, icon }: { children: React.ReactNode; 
 export function SiteFooter() {
   const { data: block } = useBlockNumber({ chainId: SUPPORTED_CHAIN_ID, watch: true, query: { refetchInterval: 12_000 } });
   return (
-    <footer className="no-print mt-16 border-t border-ink-700/80">
+    <footer className="no-print mt-20 border-t border-ink-700">
       <div className="mx-auto grid max-w-[1320px] gap-8 px-4 py-10 text-[13px] text-mist-400 sm:px-6 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div className="space-y-3">
           <Logo />
@@ -246,7 +250,7 @@ export function SiteFooter() {
             {block ? <span className="amount">Mezo Testnet · block {block.toLocaleString("en-US")}</span> : "Connecting to Mezo Testnet…"}
           </p>
         </div>
-        <FooterCol title="Product" links={[["Dashboard", "/dashboard"], ["Marketplace", "/marketplace"], ["Create a project", "/projects/new"], ["Payments", "/payments"]]} />
+        <FooterCol title="Product" links={[["Dashboard", "/dashboard"], ["Marketplace", "/marketplace"], ["Network activity", "/activity"], ["Create a project", "/projects/new"]]} />
         <FooterCol title="Learn" links={[["How escrow works", "/help"], ["Fees", "/help#fees"], ["Contract limitations", "/help#limitations"], ["FAQ", "/help#faq"]]} />
         <FooterCol title="Legal" links={[["Terms of use", "/legal/terms"], ["Privacy", "/legal/privacy"], ["Risk disclosure", "/legal/risk"], ["Escrow contract", explorerAddress(ESCROW_ADDRESS)]]} />
       </div>

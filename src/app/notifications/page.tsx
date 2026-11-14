@@ -60,7 +60,7 @@ function Notifications() {
       />
       <div className="mb-4 flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
-          <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key} className={cn("rounded-full border px-3 py-1 text-[13px]", filter === f.key ? "border-signal-400 bg-signal-500/15 text-white" : "border-ink-600 text-mist-300 hover:text-white")}>
+          <button key={f.key} onClick={() => setFilter(f.key)} aria-pressed={filter === f.key} className={cn("rounded-full border px-3 py-1 text-[13px]", filter === f.key ? "border-signal-400/70 bg-signal-500/10 text-white" : "border-ink-600 text-mist-300 hover:text-white")}>
             {f.label}
           </button>
         ))}

@@ -26,15 +26,14 @@ interface Row {
   applications: number;
 }
 
-/** Open listings (Flow B) with search + filters. Hired listings can be included for context. */
+/**
+ * Open listings (Flow B) with search + filters. Only listings that are open right now are public:
+ * once a client hires or closes a listing its terms become private to the parties again.
+ */
 export const GET = route(async (req: NextRequest) => {
   const sp = req.nextUrl.searchParams;
   const params: unknown[] = [];
-  const where: string[] = [];
-  const status = sp.get("status") ?? "open";
-  if (status === "open") where.push(`p.listing_status = 'open'`);
-  else if (status === "hired") where.push(`p.hiring_mode = 'open' and p.listing_status = 'closed' and p.freelancer_address is not null`);
-  else where.push(`p.hiring_mode = 'open' and p.listing_status in ('open','closed')`);
+  const where: string[] = [`p.listing_status = 'open'`];
   const q = sp.get("q")?.trim().slice(0, 80);
   if (q) {
     params.push(`%${q.toLowerCase()}%`);
@@ -84,7 +83,7 @@ export const GET = route(async (req: NextRequest) => {
       milestoneCount: r.milestone_count,
       milestones: r.terms.milestones.map((m) => ({ title: m.title, amount: m.amount, deadline: m.deadline })),
       finalDeadline: r.final_deadline,
-      status: r.listing_status === "open" ? "Open for applications" : "Freelancer selected",
+      status: "Open for applications",
       client: getAddress(r.client_address),
       clientName: r.client_name,
       applications: r.applications,

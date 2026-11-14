@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { getAddress } from "viem";
-import { badRequest, forbidden, json, route } from "@/lib/server/http";
+import { badRequest, forbidden, json, route, readForm } from "@/lib/server/http";
 import { requireSession } from "@/lib/server/auth";
 import { query } from "@/lib/server/db";
 import { requireProjectAccess } from "@/lib/server/projects";
@@ -48,13 +48,19 @@ export const POST = route(async (req: NextRequest, ctx: Ctx) => {
   let input: unknown;
   let files: UploadedFile[] = [];
   if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) {
-    const form = await req.formData();
+    const form = await readForm(req);
     const mi = form.get("milestoneIndex");
+    let links: unknown;
+    try {
+      links = JSON.parse(String(form.get("links") ?? "[]"));
+    } catch {
+      throw badRequest("Links must be a JSON array");
+    }
     input = {
       kind: form.get("kind"),
       milestoneIndex: mi === null || mi === "" ? null : Number(mi),
       body: form.get("body"),
-      links: JSON.parse(String(form.get("links") ?? "[]")),
+      links,
     };
     files = await readFiles(form);
   } else {

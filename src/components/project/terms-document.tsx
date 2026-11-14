@@ -85,10 +85,18 @@ export function TermsDocumentView({ terms, termsHash, version }: { terms: TermsD
           <li>Each milestone is paid only when the client approves it{terms.rules.autoRelease ? ", or when the review period ends without approval, change request or dispute (auto-release)" : ""}. A milestone can be paid only once.</li>
           {terms.rules.deadlineReclaim ? (
             <li>
-              If a milestone has no live submission by its deadline plus {formatDuration(terms.rules.reclaimGracePeriodSeconds)}, the client may reclaim that milestone. Submitted, disputed or paid work cannot be reclaimed.
+              If a milestone was never delivered by its deadline plus {formatDuration(terms.rules.reclaimGracePeriodSeconds)}, or was sent back for changes and not resubmitted within{" "}
+              {formatDuration(terms.rules.reclaimGracePeriodSeconds)} of the change request, the client may reclaim that milestone. Work awaiting review, disputed or paid
+              cannot be reclaimed. Time spent in a withdrawn dispute does not count against the freelancer.
             </li>
           ) : (
             <li>Deadline reclaim is not part of this agreement.</li>
+          )}
+          {terms.rules.savings?.enabled && (
+            <li>
+              While funds are held, the escrow keeps them in Mezo&apos;s sMUSD savings vault (MUSDSavingsRate) at 1:1 and withdraws exactly what each payout or refund needs. The
+              savings yield is split {terms.rules.savings.freelancerShareBps / 100}% to the freelancer and {(10_000 - terms.rules.savings.freelancerShareBps) / 100}% to the client.
+            </li>
           )}
           <li>{terms.rules.arbiter ? "Disputed milestones are frozen until the parties agree a split or the named arbiter rules on it." : "Disputed milestones are frozen until both parties agree a split on-chain."}</li>
           <li>Released payments are never reversed. There is no platform fee and no administrator who can move escrowed funds.</li>

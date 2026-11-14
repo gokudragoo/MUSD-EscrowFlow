@@ -19,6 +19,8 @@ export const CATEGORIES = [
 export const MIN_REVIEW_SECONDS = 60;
 export const MAX_REVIEW_SECONDS = 90 * 86_400;
 export const MAX_GRACE_SECONDS = 90 * 86_400;
+/** Contract floor for the reclaim grace period when deadline reclaim is on (testnet-demo friendly). */
+export const MIN_GRACE_SECONDS = 60;
 export const MAX_HORIZON_SECONDS = 5 * 365 * 86_400;
 
 export const addressSchema = z
@@ -63,6 +65,9 @@ export const rulesInputSchema = z.object({
   arbiter: addressSchema.nullable(),
   cancellationTerms: z.string().trim().max(2000).default(""),
   disputeTerms: z.string().trim().max(2000).default(""),
+  savings: z
+    .object({ enabled: z.boolean(), freelancerShareBps: z.number().int().min(0).max(10_000) })
+    .optional(),
 });
 
 export const draftInputSchema = z
@@ -100,6 +105,9 @@ export const draftInputSchema = z
     }
     if (d.hiringMode === "direct" && !d.freelancer) {
       ctx.addIssue({ code: "custom", path: ["freelancer"], message: "Enter the freelancer's wallet address" });
+    }
+    if (d.rules.deadlineReclaim && d.rules.reclaimGracePeriodSeconds < MIN_GRACE_SECONDS) {
+      ctx.addIssue({ code: "custom", path: ["rules", "reclaimGracePeriodSeconds"], message: "With deadline reclaim on, give the freelancer a grace period after each deadline" });
     }
     if (d.freelancer && d.rules.arbiter && d.freelancer === d.rules.arbiter) {
       ctx.addIssue({ code: "custom", path: ["rules", "arbiter"], message: "The arbiter must be a third party" });
@@ -146,6 +154,8 @@ export function buildTermsDocument(d: DraftInput, client: Address, freelancerOve
       arbiter: d.rules.arbiter ? getAddress(d.rules.arbiter) : null,
       cancellationTerms: d.rules.cancellationTerms,
       disputeTerms: d.rules.disputeTerms,
+      // Only written when on, so documents without savings keep the original (v1) shape and hash.
+      ...(d.rules.savings?.enabled ? { savings: { enabled: true, freelancerShareBps: d.rules.savings.freelancerShareBps } } : {}),
     },
     references: d.references,
   };

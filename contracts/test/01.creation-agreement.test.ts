@@ -16,12 +16,20 @@ import {
   TERMS,
   hashOf,
   SPEC_AMOUNTS,
+  ID_OFFSET,
+  pid,
 } from "./helpers";
 
 describe("EscrowFlow · deployment", () => {
-  it("binds the immutable token and exposes the rule constants", async () => {
-    const { escrow, musd } = await loadFixture(baseFixture);
+  it("binds the immutable token, savings vault and id offset and exposes the rule constants", async () => {
+    const { escrow, musd, vault } = await loadFixture(baseFixture);
     expect(await escrow.token()).to.equal(await musd.getAddress());
+    expect(await escrow.savingsVault()).to.equal(await vault.getAddress());
+    expect(await escrow.ID_OFFSET()).to.equal(ID_OFFSET);
+    expect(await escrow.MIN_RECLAIM_GRACE()).to.equal(60n);
+    expect(await escrow.totalYieldPrincipal()).to.equal(0n);
+    expect(await escrow.accYieldPerPrincipal()).to.equal(0n);
+    expect(await escrow.unattributedYield()).to.equal(0n);
     expect(await escrow.MAX_MILESTONES()).to.equal(20n);
     expect(await escrow.MIN_REVIEW_PERIOD()).to.equal(60n);
     expect(await escrow.MAX_REVIEW_PERIOD()).to.equal(BigInt(90 * DAY));
@@ -32,7 +40,28 @@ describe("EscrowFlow · deployment", () => {
 
   it("rejects a zero token address", async () => {
     const factory = await ethers.getContractFactory("EscrowFlow");
-    await expect(factory.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(factory, "ZeroAddress");
+    await expect(factory.deploy(ethers.ZeroAddress, ethers.ZeroAddress, ID_OFFSET)).to.be.revertedWithCustomError(
+      factory,
+      "ZeroAddress",
+    );
+  });
+
+  it("rejects a savings vault whose musdToken() is not the escrow token (VaultMismatch)", async () => {
+    const { musd } = await loadFixture(baseFixture);
+    const other = await ethers.deployContract("MockMUSD");
+    const otherVault = await ethers.deployContract("MockSavingsVault", [await other.getAddress()]);
+    const factory = await ethers.getContractFactory("EscrowFlow");
+    await expect(factory.deploy(await musd.getAddress(), await otherVault.getAddress(), ID_OFFSET)).to.be.revertedWithCustomError(
+      factory,
+      "VaultMismatch",
+    );
+  });
+
+  it("deploys without a vault (yield unavailable) and with any id offset", async () => {
+    const { musd } = await loadFixture(baseFixture);
+    const escrow = await ethers.deployContract("EscrowFlow", [await musd.getAddress(), ethers.ZeroAddress, 0]);
+    expect(await escrow.savingsVault()).to.equal(ethers.ZeroAddress);
+    expect(await escrow.ID_OFFSET()).to.equal(0n);
   });
 
   it("has no owner / admin / withdraw surface", async () => {
@@ -55,12 +84,14 @@ describe("EscrowFlow · escrow creation", () => {
       reclaimGracePeriod: 2 * DAY,
     });
     const tx = escrow.connect(client).createProject(params);
-    await expect(tx).to.emit(escrow, "ProjectCreated").withArgs(1n, client.address, freelancer.address);
+    const id = pid(1);
+    await expect(tx).to.emit(escrow, "ProjectCreated").withArgs(id, client.address, freelancer.address);
     await expect(tx)
       .to.emit(escrow, "TermsSet")
-      .withArgs(1n, 1, TERMS, freelancer.address, arbiter.address, E(200), 4, true, true, 2 * DAY);
+      .withArgs(id, 1, TERMS, freelancer.address, arbiter.address, E(200), 4, true, true, 2 * DAY);
+    await expect(tx).to.emit(escrow, "YieldTermsSet").withArgs(id, 1, false, 0);
 
-    const p = await escrow.getProject(1n);
+    const p = await escrow.getProject(id);
     expect(p.client).to.equal(client.address);
     expect(p.freelancer).to.equal(freelancer.address);
     expect(p.arbiter).to.equal(arbiter.address);
@@ -76,7 +107,7 @@ describe("EscrowFlow · escrow creation", () => {
     expect(p.reclaimGracePeriod).to.equal(BigInt(2 * DAY));
     expect(p.createdAt).to.equal(BigInt(await time.latest()));
 
-    const ms = await escrow.getMilestones(1n);
+    const ms = await escrow.getMilestones(id);
     expect(ms.length).to.equal(4);
     for (let i = 0; i < 4; i++) {
       expect(ms[i].amount).to.equal(SPEC_AMOUNTS[i]);
@@ -84,39 +115,43 @@ describe("EscrowFlow · escrow creation", () => {
       expect(ms[i].reviewPeriod).to.equal(BigInt(params.reviewPeriods[i]));
       expect(ms[i].status).to.equal(MS.Pending);
       expect(ms[i].revision).to.equal(0n);
+      expect(ms[i].pausedFor).to.equal(0n);
     }
-    expect(await escrow.heldAmount(1n)).to.equal(0n);
+    expect(await escrow.heldAmount(id)).to.equal(0n);
+    const y = await escrow.getYield(id);
+    expect([y.enabled, y.freelancerBps, y.principal, y.accrued, y.paid]).to.deep.equal([false, 0n, 0n, 0n, 0n]);
   });
 
-  it("assigns sequential ids starting at 1 and indexes projects by client and freelancer", async () => {
+  it("assigns sequential ids starting at ID_OFFSET + 1 and indexes projects by client and freelancer", async () => {
     const { escrow, client, client2, freelancer, freelancer2 } = await loadFixture(baseFixture);
     await createProject(escrow, client, { freelancer: freelancer.address });
     await createProject(escrow, client, { freelancer: freelancer2.address });
     await createProject(escrow, client2, { freelancer: freelancer.address });
     expect(await escrow.projectCount()).to.equal(3n);
-    expect(await escrow.projectsOfClient(client.address)).to.deep.equal([1n, 2n]);
-    expect(await escrow.projectsOfClient(client2.address)).to.deep.equal([3n]);
-    expect(await escrow.projectsOfFreelancer(freelancer.address)).to.deep.equal([1n, 3n]);
-    expect(await escrow.projectsOfFreelancer(freelancer2.address)).to.deep.equal([2n]);
+    expect(await escrow.projectsOfClient(client.address)).to.deep.equal([pid(1), pid(2)]);
+    expect(await escrow.projectsOfClient(client2.address)).to.deep.equal([pid(3)]);
+    expect(await escrow.projectsOfFreelancer(freelancer.address)).to.deep.equal([pid(1), pid(3)]);
+    expect(await escrow.projectsOfFreelancer(freelancer2.address)).to.deep.equal([pid(2)]);
+    expect(pid(1)).to.equal(1001n);
   });
 
   it("accepts exactly MAX_MILESTONES (20) milestones", async () => {
     const { escrow, client, freelancer } = await loadFixture(baseFixture);
     const amounts = Array.from({ length: 20 }, () => E(1));
-    await createProject(escrow, client, { freelancer: freelancer.address, amounts });
-    expect((await escrow.getProject(1n)).milestoneCount).to.equal(20n);
-    expect((await escrow.getProject(1n)).totalAmount).to.equal(E(20));
+    const id = await createProject(escrow, client, { freelancer: freelancer.address, amounts });
+    expect((await escrow.getProject(id)).milestoneCount).to.equal(20n);
+    expect((await escrow.getProject(id)).totalAmount).to.equal(E(20));
   });
 
   it("accepts boundary review periods (60 s and 90 days) and grace (90 days)", async () => {
     const { escrow, client, freelancer } = await loadFixture(baseFixture);
-    await createProject(escrow, client, {
+    const id = await createProject(escrow, client, {
       freelancer: freelancer.address,
       amounts: [E(1), E(2)],
       reviewPeriods: [60, 90 * DAY],
       reclaimGracePeriod: 90 * DAY,
     });
-    const ms = await escrow.getMilestones(1n);
+    const ms = await escrow.getMilestones(id);
     expect(ms[0].reviewPeriod).to.equal(60n);
     expect(ms[1].reviewPeriod).to.equal(BigInt(90 * DAY));
   });
@@ -290,6 +325,9 @@ describe("EscrowFlow · agreement validation", () => {
     await expect(escrow.connect(freelancer).acceptTerms(99n, TERMS, 1))
       .to.be.revertedWithCustomError(escrow, "ProjectNotFound")
       .withArgs(99n);
+    // ids up to the offset belong to the legacy registry, never to this one
+    await expect(escrow.getProject(1n)).to.be.revertedWithCustomError(escrow, "ProjectNotFound").withArgs(1n);
+    await expect(escrow.getProject(ID_OFFSET)).to.be.revertedWithCustomError(escrow, "ProjectNotFound");
   });
 
   it("updateTerms bumps the version, resets acceptance and emits TermsSet", async () => {
@@ -299,7 +337,9 @@ describe("EscrowFlow · agreement validation", () => {
     const params = await makeParams({ freelancer: freelancer.address, termsHash: v2, amounts: [E(100), E(100)] });
     await expect(escrow.connect(client).updateTerms(id, params))
       .to.emit(escrow, "TermsSet")
-      .withArgs(id, 2, v2, freelancer.address, ethers.ZeroAddress, E(200), 2, false, false, DAY);
+      .withArgs(id, 2, v2, freelancer.address, ethers.ZeroAddress, E(200), 2, false, false, DAY)
+      .and.to.emit(escrow, "YieldTermsSet")
+      .withArgs(id, 2, false, 0);
     const p = await escrow.getProject(id);
     expect(p.status).to.equal(PS.AwaitingAcceptance);
     expect(p.acceptedVersion).to.equal(0n);

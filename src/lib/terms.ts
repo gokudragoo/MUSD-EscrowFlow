@@ -25,7 +25,21 @@ export interface TermsRules {
   arbiter: Address | null;
   cancellationTerms: string;
   disputeTerms: string;
+  /**
+   * Optional (v2 escrows): park the held budget in Mezo's sMUSD savings vault while work is in
+   * progress and split the yield. Absent on older documents, so their hashes never change.
+   */
+  savings?: TermsSavings;
 }
+
+export interface TermsSavings {
+  enabled: boolean;
+  /** Freelancer's share of the savings yield in basis points (0–10 000); the client gets the rest. */
+  freelancerShareBps: number;
+}
+
+export const savingsOf = (doc: Pick<TermsDocument, "rules">): TermsSavings =>
+  doc.rules.savings?.enabled ? { enabled: true, freelancerShareBps: doc.rules.savings.freelancerShareBps } : { enabled: false, freelancerShareBps: 0 };
 
 /** The agreement document. Its canonical keccak256 is the on-chain `termsHash`. */
 export interface TermsDocument {
@@ -61,6 +75,8 @@ export interface ProjectParamsArg {
   amounts: bigint[];
   deadlines: bigint[];
   reviewPeriods: number[];
+  yieldEnabled: boolean;
+  freelancerYieldBps: number;
 }
 
 export function termsToParams(doc: TermsDocument): ProjectParamsArg {
@@ -74,6 +90,8 @@ export function termsToParams(doc: TermsDocument): ProjectParamsArg {
     amounts: doc.milestones.map((m) => BigInt(m.amount)),
     deadlines: doc.milestones.map((m) => BigInt(m.deadline)),
     reviewPeriods: doc.milestones.map((m) => m.reviewPeriodSeconds),
+    yieldEnabled: savingsOf(doc).enabled,
+    freelancerYieldBps: savingsOf(doc).freelancerShareBps,
   };
 }
 
@@ -103,6 +121,10 @@ export function validateTermsDocument(doc: TermsDocument): string[] {
     problems.push("Milestone amounts must be integer base units");
   }
   if (amounts.some((a) => a <= 0n)) problems.push("Every milestone needs an amount above zero");
+  const sv = doc.rules.savings;
+  if (sv && (!Number.isInteger(sv.freelancerShareBps) || sv.freelancerShareBps < 0 || sv.freelancerShareBps > 10_000)) {
+    problems.push("Savings yield split must be between 0 and 100%");
+  }
   try {
     if (sumWei(amounts) !== BigInt(doc.totalAmount)) problems.push("Milestone amounts do not add up to the budget");
   } catch {
@@ -137,6 +159,8 @@ export function compareTermsWithChain(
   doc: TermsDocument,
   project: ChainProjectLike,
   milestones: readonly ChainMilestoneLike[],
+  /** v2 savings terms from getYield(); omit for v1 escrows (which have no savings option). */
+  chainYield?: { enabled: boolean; freelancerBps: number } | null,
 ): { ok: boolean; mismatches: string[] } {
   const mismatches: string[] = [];
   const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -148,6 +172,13 @@ export function compareTermsWithChain(
   if (doc.rules.deadlineReclaim !== project.deadlineReclaim) mismatches.push("Deadline reclaim rule differs");
   if (doc.rules.reclaimGracePeriodSeconds !== Number(project.reclaimGracePeriod)) mismatches.push("Grace period differs");
   if (BigInt(doc.totalAmount) !== project.totalAmount) mismatches.push("Total amount differs");
+  const sv = savingsOf(doc);
+  if (chainYield) {
+    if (sv.enabled !== chainYield.enabled) mismatches.push("Savings (sMUSD) rule differs");
+    else if (sv.enabled && sv.freelancerShareBps !== Number(chainYield.freelancerBps)) mismatches.push("Savings yield split differs");
+  } else if (sv.enabled) {
+    mismatches.push("The document enables sMUSD savings but the escrow does not report it");
+  }
   if (doc.milestones.length !== Number(project.milestoneCount) || doc.milestones.length !== milestones.length) {
     mismatches.push("Milestone count differs");
   } else {

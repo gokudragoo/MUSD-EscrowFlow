@@ -16,13 +16,14 @@ import { Amount, SourceTag, TxLink } from "@/components/ui/chain";
 import type { TimelineItem } from "@/lib/client/types";
 
 const SEGMENT_CLASS: Record<number, string> = {
-  [MilestoneStatus.Pending]: "bg-held-400/80",
-  [MilestoneStatus.Submitted]: "bg-held-400 ring-1 ring-inset ring-signal-300/70",
-  [MilestoneStatus.ChangesRequested]: "bg-held-400/60",
+  [MilestoneStatus.Pending]: "bg-held-400/75",
+  [MilestoneStatus.Submitted]: "bg-held-300 ring-2 ring-inset ring-signal-400",
+  [MilestoneStatus.ChangesRequested]: "bg-held-400/55",
   [MilestoneStatus.Disputed]: "hatch-warn",
   [MilestoneStatus.Released]: "bg-paid-400",
-  [MilestoneStatus.Refunded]: "bg-refund-400/55",
-  [MilestoneStatus.Resolved]: "bg-gradient-to-r from-paid-400 to-refund-400/60",
+  [MilestoneStatus.Refunded]: "bg-refund-400",
+  // Settled by a split: part paid, part refunded — shown as muted brass, never a gradient.
+  [MilestoneStatus.Resolved]: "bg-paid-400/50",
 };
 
 /**
@@ -58,10 +59,11 @@ export function EscrowBar({
       </div>
       {showLegend && (
         <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-mist-400">
-          <LegendDot className="bg-held-400" label="Held in escrow" />
+          <LegendDot className="bg-held-400/75" label="Held in escrow" />
           <LegendDot className="bg-paid-400" label="Released to freelancer" />
-          <LegendDot className="bg-refund-400/60" label="Refunded to client" />
+          <LegendDot className="bg-refund-400" label="Refunded to client" />
           <LegendDot className="hatch-warn" label="Disputed (frozen)" />
+          <LegendDot className="bg-held-300 ring-2 ring-inset ring-signal-400" label="Awaiting review" />
           {!funded && <LegendDot className="border border-dashed border-ink-500" label="Not funded yet" />}
         </div>
       )}

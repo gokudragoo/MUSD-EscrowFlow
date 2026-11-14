@@ -1,89 +1,85 @@
-"use client";
+import { parseMusd } from "@/lib/money";
+import { EscrowBar } from "@/components/escrow/escrow-ui";
 
-import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
-import { useMediaQuery, useMounted } from "@/hooks/useClient";
-import { cn } from "@/lib/utils";
+const ROWS = [
+  { n: 1, title: "UI design", amount: "40.00", state: "Paid", status: 4 },
+  { n: 2, title: "Frontend build", amount: "60.00", state: "In review", status: 1 },
+  { n: 3, title: "Backend integration", amount: "60.00", state: "Held", status: 0 },
+  { n: 4, title: "Final delivery", amount: "40.00", state: "Held", status: 0 },
+] as const;
 
-const VaultScene = dynamic(() => import("./vault-scene"), { ssr: false, loading: () => <VaultPoster /> });
-
-const STEPS = [
-  { label: "UI design", amount: "40" },
-  { label: "Frontend", amount: "60" },
-  { label: "Backend", amount: "60" },
-  { label: "Final delivery", amount: "40" },
-];
-
-function canWebGL() {
-  try {
-    const c = document.createElement("canvas");
-    return !!(c.getContext("webgl2") || c.getContext("webgl"));
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * The hero is the product itself: an escrow statement, set like the agreement document, showing how
+ * one budget sits in the contract milestone by milestone. Static and illustrative (labelled so).
+ */
 export function HeroVisual() {
-  const mounted = useMounted();
-  const reduce = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const small = useMediaQuery("(max-width: 640px)");
-  const webgl = useMemo(() => (mounted ? canWebGL() : false), [mounted]);
-  const mode: "pending" | "scene" | "poster" = !mounted ? "pending" : !reduce && !small && webgl ? "scene" : "poster";
-  const [step, setStep] = useState(0);
-  const released = STEPS.slice(0, step).reduce((a, s) => a + Number(s.amount), 0);
   return (
-    <div className="relative aspect-[5/4] w-full sm:aspect-[4/3] lg:aspect-auto lg:h-full">
-      {mode === "scene" ? <VaultScene onStep={setStep} /> : <VaultPoster />}
-      <div className="pointer-events-none absolute inset-x-0 bottom-3 flex flex-wrap items-end justify-between gap-3 px-2 text-[12px]">
-        <div className="glass rounded-[10px] px-3 py-2">
-          <div className="text-mist-400">Escrow (illustrative)</div>
-          <div className="amount mt-0.5 text-[13px] text-mist-100">
-            <span className="text-held-300">{200 - (mode === "scene" ? released : 0)} held</span>
-            <span className="mx-1.5 text-mist-500">/</span>
-            <span className="text-paid-300">{mode === "scene" ? released : 0} released</span>
-            <span className="ml-1 text-mist-500">MUSD</span>
+    <figure className="relative mx-auto w-full max-w-[540px]" aria-label="Example escrow statement">
+      <div className="rounded-[14px] border border-ink-600 bg-ink-850 shadow-[0_30px_80px_-40px_rgb(0_0_0/0.9)]">
+        <div className="flex items-start justify-between gap-4 border-b border-ink-700 px-6 pb-4 pt-5">
+          <div>
+            <div className="text-[12px] text-mist-400">Escrow statement</div>
+            <div className="display mt-1 text-[20px] leading-snug text-white">Marketing website</div>
+            <div className="mt-1 font-mono text-[11.5px] text-mist-500">client 0x85bF…3EfE · freelancer 0x4309…034f</div>
           </div>
+          <span className="shrink-0 rounded-full border border-ink-600 px-2.5 py-0.5 text-[11.5px] text-mist-400">Example</span>
         </div>
-        <ol className="glass hidden gap-1.5 rounded-[10px] px-2.5 py-2 sm:flex" aria-label="Milestones">
-          {STEPS.map((s, i) => (
-            <li key={s.label} className={cn("rounded-md px-2 py-1 transition-colors", mode === "scene" && i < step ? "bg-paid-400/15 text-paid-300" : "text-mist-400")}>
-              M{i + 1} · {s.amount}
-            </li>
-          ))}
-        </ol>
-      </div>
-    </div>
-  );
-}
 
-/** Static rendering of the same composition (reduced motion, small screens, no WebGL). */
-export function VaultPoster() {
-  return (
-    <svg viewBox="0 0 520 400" className="absolute inset-0 h-full w-full" role="img" aria-label="An escrow vault holding MUSD, locked by four milestone rings, with released tokens flowing to the freelancer">
-      <defs>
-        <radialGradient id="core" cx="50%" cy="45%" r="55%">
-          <stop offset="0%" stopColor="#b3aeff" />
-          <stop offset="70%" stopColor="#6f66f2" />
-          <stop offset="100%" stopColor="#3b3596" />
-        </radialGradient>
-        <linearGradient id="glass" x1="0" x2="1">
-          <stop offset="0%" stopColor="#9fb5ff" stopOpacity="0.16" />
-          <stop offset="100%" stopColor="#9fb5ff" stopOpacity="0.04" />
-        </linearGradient>
-      </defs>
-      <rect x="110" y="70" width="150" height="260" rx="75" fill="url(#glass)" stroke="#5b92ff" strokeOpacity="0.35" />
-      <circle cx="185" cy="200" r="54" fill="url(#core)" />
-      {[0, 1, 2, 3].map((i) => (
-        <ellipse key={i} cx="185" cy={130 + i * 46} rx="92" ry="18" fill="none" stroke={i === 0 ? "#2fc6f6" : "#8b83ff"} strokeWidth="5" strokeDasharray={i === 0 ? "0" : "520 40"} opacity={i === 0 ? 0.75 : 0.95} />
-      ))}
-      <path d="M215 175 C 280 70, 360 110, 420 230" fill="none" stroke="#2fc6f6" strokeOpacity="0.5" strokeWidth="2" strokeDasharray="4 8" />
-      {[0.25, 0.45, 0.65, 0.82].map((t, i) => {
-        const x = (1 - t) ** 3 * 215 + 3 * (1 - t) ** 2 * t * 280 + 3 * (1 - t) * t * t * 360 + t ** 3 * 420;
-        const y = (1 - t) ** 3 * 175 + 3 * (1 - t) ** 2 * t * 70 + 3 * (1 - t) * t * t * 110 + t ** 3 * 230;
-        return <ellipse key={i} cx={x} cy={y} rx="9" ry="4" fill="#2fc6f6" />;
-      })}
-      <ellipse cx="430" cy="270" rx="44" ry="12" fill="#1b2950" stroke="#34477a" />
-      <circle cx="430" cy="245" r="17" fill="#2fc6f6" />
-    </svg>
+        <div className="px-6 pt-5">
+          <EscrowBar amounts={ROWS.map((r) => parseMusd(r.amount))} statuses={ROWS.map((r) => r.status)} funded size="md" />
+        </div>
+
+        <table className="mt-4 w-full text-[13.5px]">
+          <tbody>
+            {ROWS.map((r) => (
+              <tr key={r.n} className="border-t border-ink-700/70 first:border-t-0">
+                <td className="w-14 py-2.5 pl-6 pr-2 text-mist-500">M{r.n}</td>
+                <td className="py-2.5 text-mist-100">{r.title}</td>
+                <td className="amount py-2.5 pr-4 text-right text-mist-100">{r.amount}</td>
+                <td className="w-[104px] py-2.5 pr-6 text-right">
+                  <span
+                    className={
+                      r.state === "Paid"
+                        ? "rounded-full bg-signal-500 px-2 py-0.5 text-[11.5px] font-medium text-ink-950"
+                        : r.state === "In review"
+                          ? "rounded-full border border-mist-400/50 px-2 py-0.5 text-[11.5px] text-mist-100"
+                          : "text-[12px] text-mist-400"
+                    }
+                  >
+                    {r.state}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <dl className="mt-2 grid grid-cols-3 border-t border-ink-700 text-[12px]">
+          <div className="px-6 py-3.5">
+            <dt className="text-mist-400">Funded</dt>
+            <dd className="amount mt-0.5 text-[15px] font-semibold text-white">200.00</dd>
+          </div>
+          <div className="border-l border-ink-700 px-5 py-3.5">
+            <dt className="text-mist-400">Released</dt>
+            <dd className="amount mt-0.5 text-[15px] font-semibold text-signal-300">40.00</dd>
+          </div>
+          <div className="border-l border-ink-700 px-5 py-3.5">
+            <dt className="text-mist-400">Held, in sMUSD</dt>
+            <dd className="amount mt-0.5 text-[15px] font-semibold text-white">160.00</dd>
+          </div>
+        </dl>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-b-[14px] border-t border-ink-700 bg-ink-900/60 px-6 py-3 text-[11.5px] text-mist-500">
+          <span>
+            Terms hash <span className="font-mono text-mist-300">0x9f3a…c21e</span>, accepted v1
+          </span>
+          <span>funded = released + refunded + held</span>
+        </div>
+      </div>
+      <figcaption className="sr-only">
+        An example escrow of 200 MUSD over four milestones: milestone 1 paid (40), milestone 2 in review (60), milestones 3 and 4 held (100), with held funds
+        earning the sMUSD savings rate.
+      </figcaption>
+    </figure>
   );
 }

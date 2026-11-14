@@ -108,7 +108,7 @@ describe("gas policy (EIP-7623 floor safety)", () => {
     expect(withGasBuffer(null, 260_000n)).toBe(260_000n);
   });
   it("scales floors with milestone count and caps at 20", () => {
-    expect(gasFloor("createProject", 4)).toBe(450_000n + 4n * 90_000n);
+    expect(gasFloor("createProject", 4)).toBe(520_000n + 4n * 90_000n);
     expect(gasFloor("createProject", 50)).toBe(gasFloor("createProject", 20));
     expect(gasFloor("approveAndRelease")).toBeGreaterThan(105_194n * 2n);
   });

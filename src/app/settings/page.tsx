@@ -43,7 +43,8 @@ export default function SettingsPage() {
 function Settings() {
   const q = useQuery({ queryKey: ["me"], queryFn: () => api<{ address: string; profile: Profile | null }>("/api/me/profile") });
   if (q.isLoading) return <Skeleton className="h-96" />;
-  return <SettingsForm key={q.data?.profile?.updatedAt ?? "new"} profile={q.data?.profile ?? null} />;
+  // Keyed on the wallet, not updatedAt: uploading an avatar must not wipe unsaved edits in the form.
+  return <SettingsForm key={q.data?.address ?? "new"} profile={q.data?.profile ?? null} />;
 }
 
 function LinkRows({ title, rows, onChange }: { title: string; rows: LinkRow[]; onChange: (rows: LinkRow[]) => void }) {
@@ -163,7 +164,7 @@ function SettingsForm({ profile }: { profile: Profile | null }) {
               </Field>
             </div>
             <label className="flex items-center gap-2 text-[13.5px] text-mist-100 sm:col-span-2">
-              <input type="checkbox" checked={f.available} onChange={(e) => setF({ ...f, available: e.target.checked })} className="size-4 accent-[#3d7bff]" /> Available for new work
+              <input type="checkbox" checked={f.available} onChange={(e) => setF({ ...f, available: e.target.checked })} className="size-4 accent-[#d4a548]" /> Available for new work
             </label>
             <div className="sm:col-span-2">
               <LinkRows title="Portfolio links" rows={f.portfolio} onChange={(portfolio) => setF({ ...f, portfolio })} />
@@ -178,7 +179,7 @@ function SettingsForm({ profile }: { profile: Profile | null }) {
           <div className="space-y-2 p-5">
             {PREFS.map(([k, label]) => (
               <label key={k} className="flex items-center gap-2 text-[13.5px] text-mist-100">
-                <input type="checkbox" className="size-4 accent-[#3d7bff]" checked={f.prefs[k] !== false} onChange={(e) => setF({ ...f, prefs: { ...f.prefs, [k]: e.target.checked } })} /> {label}
+                <input type="checkbox" className="size-4 accent-[#d4a548]" checked={f.prefs[k] !== false} onChange={(e) => setF({ ...f, prefs: { ...f.prefs, [k]: e.target.checked } })} /> {label}
               </label>
             ))}
           </div>

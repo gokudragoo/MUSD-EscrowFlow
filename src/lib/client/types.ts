@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import type { ChainMilestone, ChainProject, Ledger } from "@/lib/escrow-state";
+import type { ChainMilestone, ChainProject, ChainYield, Ledger } from "@/lib/escrow-state";
 import type { TermsDocument } from "@/lib/terms";
 
 type Json<T> = { [K in keyof T]: T[K] extends bigint ? string : T[K] };
@@ -7,8 +7,12 @@ type Json<T> = { [K in keyof T]: T[K] extends bigint ? string : T[K] };
 export interface ChainView {
   id: string;
   blockNumber: string;
+  /** Registry holding this escrow; v1 escrows are legacy (read-only in the app). */
+  escrow: Address;
+  version: 1 | 2;
   project: ChainProject;
   milestones: ChainMilestone[];
+  yield: ChainYield | null;
   ledger: Ledger;
   reconciliation: { ok: boolean; problems: string[] };
 }
@@ -16,8 +20,11 @@ export interface ChainView {
 export interface ChainViewJson {
   id: string;
   blockNumber: string;
+  escrow: Address;
+  version: 1 | 2;
   project: Json<ChainProject>;
   milestones: Json<ChainMilestone>[];
+  yield: Json<ChainYield> | null;
   ledger: Json<Ledger>;
   reconciliation: { ok: boolean; problems: string[] };
 }
@@ -32,6 +39,7 @@ const MILESTONE_BIG: (keyof ChainMilestone)[] = [
   "proposedFreelancerAmount",
   "releasedAmount",
   "refundedAmount",
+  "pausedFor",
 ];
 
 /** Restores bigint fields of chain data serialised by the API as decimal strings. */
@@ -41,11 +49,14 @@ export function reviveChain(c: ChainViewJson | null | undefined): ChainView | nu
   for (const k of PROJECT_BIG) project[k] = BigInt(project[k] as string);
   const milestones = c.milestones.map((m) => {
     const o = { ...m } as Record<string, unknown>;
-    for (const k of MILESTONE_BIG) o[k] = BigInt(o[k] as string);
+    for (const k of MILESTONE_BIG) o[k] = BigInt((o[k] as string | undefined) ?? "0");
     return o as unknown as ChainMilestone;
   });
   const ledger = Object.fromEntries(Object.entries(c.ledger).map(([k, v]) => [k, BigInt(v as string)])) as unknown as Ledger;
-  return { ...c, project: project as unknown as ChainProject, milestones, ledger };
+  const y = c.yield
+    ? { ...c.yield, principal: BigInt(c.yield.principal), accrued: BigInt(c.yield.accrued), paid: BigInt(c.yield.paid) }
+    : null;
+  return { ...c, version: c.version ?? 1, project: project as unknown as ChainProject, milestones, yield: y as ChainYield | null, ledger };
 }
 
 export interface TimelineItem {

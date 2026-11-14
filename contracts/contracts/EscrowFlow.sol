@@ -4,22 +4,43 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-/// @title EscrowFlow — milestone-based freelance escrow settled in MUSD
+/// @notice The subset of Mezo's MUSDSavingsRate (sMUSD) vault that EscrowFlow uses.
+/// @dev deposit pulls MUSD and mints sMUSD 1:1; withdraw burns sMUSD, first pays the caller's
+///      accrued yield in MUSD and then returns exactly `amount` principal; claimYield pays the
+///      accrued yield in MUSD. Yield per sMUSD is tracked in `yieldIndex` (scaled 1e18).
+interface ISavingsVault {
+    function musdToken() external view returns (address);
+    function deposit(uint256 amount) external;
+    function withdraw(uint256 amount) external;
+    function claimYield() external returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function claimableYield(address account) external view returns (uint256);
+    function yieldIndex() external view returns (uint256);
+    function supplyYieldIndex(address account) external view returns (uint256);
+}
+
+/// @title EscrowFlow (v2): milestone-based freelance escrow settled in MUSD
 /// @notice One registry contract that holds many client/freelancer projects. Each project
 ///         locks the exact agreed MUSD budget and releases it milestone by milestone
-///         according to rules both parties agreed to before funding.
+///         according to rules both parties agreed to before funding. Optionally (agreed in the
+///         terms) the held MUSD is parked in Mezo's sMUSD savings vault and the yield it earns
+///         is split between the parties.
 /// @dev Design rules (see README "Escrow state machine"):
-///      - The token is fixed at construction. There is no owner, no admin, no upgrade path,
-///        no pause switch and no arbitrary external call: nobody can move escrowed funds
-///        except through the per-project rules below.
-///      - Terms (milestone amounts, deadlines, review periods, arbiter, flags and an
+///      - The token, the savings vault and the project-id offset are fixed at construction.
+///        There is no owner, no admin, no upgrade path, no pause switch and no arbitrary
+///        external call: nobody can move escrowed funds except through the per-project rules.
+///      - Terms (milestone amounts, deadlines, review periods, arbiter, flags, yield split and an
 ///        off-chain terms document hash) are editable by the client only before funding;
 ///        every edit bumps `termsVersion` and resets the freelancer's acceptance.
 ///      - Funding pulls the EXACT total and rejects any balance shortfall (fee-on-transfer).
 ///      - Every milestone pays out at most once: Released / Refunded / Resolved are terminal.
-///      - Per project: fundedAmount == releasedAmount + refundedAmount + held.
+///      - Per project: fundedAmount == releasedAmount + refundedAmount + held, and for
+///        yield projects the vault principal equals held.
+///      - Time spent disputed never runs a clock against either party: review windows,
+///        change-request grace and deadline reclaim are shifted by the paused time.
 contract EscrowFlow is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -86,13 +107,13 @@ contract EscrowFlow is ReentrancyGuard {
 
     struct Milestone {
         uint128 amount;
-        uint64 deadline;
+        uint64 deadline; // agreed term; never mutated (effective deadline = deadline + pausedFor)
         uint32 reviewPeriod;
         MilestoneStatus status;
         MilestoneStatus statusBeforeDispute;
         uint16 revision; // number of submissions so far
-        uint64 submittedAt;
-        uint64 changesRequestedAt;
+        uint64 submittedAt; // shifted forward by withdrawn-dispute time
+        uint64 changesRequestedAt; // shifted forward by withdrawn-dispute time
         uint64 disputedAt;
         address disputeInitiator;
         address settlementProposer;
@@ -100,6 +121,7 @@ contract EscrowFlow is ReentrancyGuard {
         bytes32 submissionHash; // keccak256 of the latest off-chain submission record
         uint128 releasedAmount; // paid to freelancer
         uint128 refundedAmount; // returned to client
+        uint64 pausedFor; // total seconds spent disputed (withdrawn disputes)
     }
 
     struct ProjectParams {
@@ -112,6 +134,26 @@ contract EscrowFlow is ReentrancyGuard {
         uint128[] amounts;
         uint64[] deadlines;
         uint32[] reviewPeriods;
+        bool yieldEnabled; // park held MUSD in the sMUSD savings vault
+        uint16 freelancerYieldBps; // freelancer's share of the yield (0..10000); the client gets the rest
+    }
+
+    /// @dev Per-project savings state (kept apart from `Project` so its ABI is unchanged).
+    struct YieldState {
+        bool enabled;
+        uint16 freelancerBps;
+        uint128 principal; // MUSD of this project deposited in the vault (== held while funded)
+        uint128 accrued; // checkpointed, undistributed yield attributed to this project
+        uint128 paid; // yield already distributed to the parties
+        uint256 snapshot; // accYieldPerPrincipal at the last checkpoint
+    }
+
+    struct YieldView {
+        bool enabled;
+        uint16 freelancerBps;
+        uint128 principal;
+        uint128 accrued; // checkpointed + this project's share of yield still pending in the vault
+        uint128 paid;
     }
 
     // ---------------------------------------------------------------------
@@ -122,21 +164,37 @@ contract EscrowFlow is ReentrancyGuard {
     /// @dev 60 s floor keeps the review-timeout path demonstrable on testnet; the app defaults to days.
     uint32 public constant MIN_REVIEW_PERIOD = 60;
     uint32 public constant MAX_REVIEW_PERIOD = 90 days;
+    /// @dev Same testnet-demo floor as MIN_REVIEW_PERIOD; applies only when deadline reclaim is agreed.
+    uint32 public constant MIN_RECLAIM_GRACE = 60;
     uint32 public constant MAX_RECLAIM_GRACE = 90 days;
     uint64 public constant MAX_DEADLINE_HORIZON = 5 * 365 days;
+    uint256 private constant BPS = 10_000;
+    uint256 private constant YIELD_PRECISION = 1e36;
 
     /// @notice The settlement token (MUSD on Mezo). Immutable.
     IERC20 public immutable token;
+    /// @notice Mezo's sMUSD savings vault (address(0) = yield unavailable). Immutable.
+    ISavingsVault public immutable savingsVault;
+    /// @notice Project ids are ID_OFFSET + 1, ID_OFFSET + 2, ... (keeps ids unique across registries).
+    uint256 public immutable ID_OFFSET;
 
+    /// @notice Number of projects created (the latest id is ID_OFFSET + projectCount).
     uint256 public projectCount;
     /// @notice Sum of funds currently held for all projects (excludes stray donations).
     uint256 public totalHeld;
+    /// @notice Sum of principal of all yield projects currently deposited in the savings vault.
+    uint256 public totalYieldPrincipal;
+    /// @notice Harvested yield per unit of yield principal, scaled by 1e36 (MasterChef-style).
+    uint256 public accYieldPerPrincipal;
+    /// @notice Yield harvested while no yield principal was deposited (belongs to no project).
+    uint256 public unattributedYield;
 
     mapping(uint256 => Project) private _projects;
     mapping(uint256 => mapping(uint256 => Milestone)) private _milestones;
     mapping(address => uint256[]) private _clientProjects;
     mapping(address => uint256[]) private _freelancerProjects;
     mapping(uint256 => mapping(address => bool)) private _freelancerIndexed;
+    mapping(uint256 => YieldState) private _yield;
 
     // ---------------------------------------------------------------------
     // Events
@@ -155,6 +213,7 @@ contract EscrowFlow is ReentrancyGuard {
         bool deadlineReclaim,
         uint32 reclaimGracePeriod
     );
+    event YieldTermsSet(uint256 indexed projectId, uint32 version, bool enabled, uint16 freelancerYieldBps);
     event TermsAccepted(uint256 indexed projectId, address indexed freelancer, uint32 version, bytes32 termsHash);
     event AcceptanceRevoked(uint256 indexed projectId, address indexed freelancer, uint32 version);
     event ProjectFunded(uint256 indexed projectId, address indexed client, uint128 amount);
@@ -180,11 +239,21 @@ contract EscrowFlow is ReentrancyGuard {
         uint128 clientAmount,
         ResolutionKind kind
     );
-    event DisputeWithdrawn(uint256 indexed projectId, uint256 indexed index, address indexed by);
+    event DisputeWithdrawn(uint256 indexed projectId, uint256 indexed index, address indexed by, uint64 pausedSeconds);
     event CancellationProposed(uint256 indexed projectId, address indexed by);
     event CancellationRevoked(uint256 indexed projectId, address indexed by);
     event ProjectCancelled(uint256 indexed projectId, address indexed by, uint128 refundedAmount, bool wasFunded);
     event ProjectClosed(uint256 indexed projectId, ProjectStatus finalStatus);
+    event SavingsDeposited(uint256 indexed projectId, uint128 amount);
+    event SavingsWithdrawn(uint256 indexed projectId, uint128 amount);
+    event YieldHarvested(uint256 amount);
+    event YieldDistributed(
+        uint256 indexed projectId,
+        address indexed freelancer,
+        uint128 freelancerAmount,
+        address indexed client,
+        uint128 clientAmount
+    );
 
     // ---------------------------------------------------------------------
     // Errors
@@ -225,14 +294,28 @@ contract EscrowFlow is ReentrancyGuard {
     error NoCancellationProposal();
     error ProjectAlreadyCancelled();
     error DisputeLockedByCancellation();
+    error RefundMismatch(uint128 actual);
+    error NothingSubmitted();
+    error YieldUnavailable();
+    error YieldNotEnabled();
+    error InvalidYieldSplit();
+    error VaultMismatch();
+    error VaultShortfall();
+    error NothingToDistribute();
 
     // ---------------------------------------------------------------------
     // Construction
     // ---------------------------------------------------------------------
 
-    constructor(IERC20 token_) {
+    /// @param token_ MUSD.
+    /// @param vault_ Mezo's MUSDSavingsRate (sMUSD) vault for `token_`, or address(0) to disable yield.
+    /// @param idOffset_ First project id is idOffset_ + 1.
+    constructor(IERC20 token_, ISavingsVault vault_, uint256 idOffset_) {
         if (address(token_) == address(0)) revert ZeroAddress();
+        if (address(vault_) != address(0) && vault_.musdToken() != address(token_)) revert VaultMismatch();
         token = token_;
+        savingsVault = vault_;
+        ID_OFFSET = idOffset_;
     }
 
     // ---------------------------------------------------------------------
@@ -276,7 +359,7 @@ contract EscrowFlow is ReentrancyGuard {
     /// @notice Client creates a project for a named freelancer. Nothing is funded yet.
     function createProject(ProjectParams calldata params) external returns (uint256 projectId) {
         uint128 total = _validateParams(params, msg.sender);
-        projectId = ++projectCount;
+        projectId = ID_OFFSET + (++projectCount);
 
         Project storage p = _projects[projectId];
         p.client = msg.sender;
@@ -399,6 +482,9 @@ contract EscrowFlow is ReentrancyGuard {
         if (received != total) revert FundingShortfall(total, received);
 
         emit ProjectFunded(projectId, msg.sender, total);
+
+        YieldState storage y = _yield[projectId];
+        if (y.enabled) _vaultIn(projectId, y, total);
     }
 
     // ---------------------------------------------------------------------
@@ -478,8 +564,9 @@ contract EscrowFlow is ReentrancyGuard {
         _release(p, m, projectId, index, ReleaseKind.ReviewTimeout);
     }
 
-    /// @notice Client reclaims a milestone whose deadline (+ grace) passed without a live submission.
-    ///         Only available when deadline reclaim was agreed. Never touches submitted/disputed/paid work.
+    /// @notice Client reclaims a milestone whose deadline (+ dispute pauses + grace) passed without a
+    ///         live submission. Only available when deadline reclaim was agreed. Never touches
+    ///         submitted/disputed/paid work.
     function reclaimExpiredMilestone(uint256 projectId, uint256 index) external nonReentrant {
         Project storage p = _project(projectId);
         _requireClient(p);
@@ -493,14 +580,16 @@ contract EscrowFlow is ReentrancyGuard {
         if (block.timestamp <= availableAt) revert ReclaimNotYetAvailable(availableAt);
 
         uint128 amount = m.amount;
+        address client = p.client;
         m.status = MilestoneStatus.Refunded;
         m.refundedAmount = amount;
         p.refundedAmount += amount;
         totalHeld -= amount;
         _maybeClose(p, projectId);
 
-        token.safeTransfer(p.client, amount);
-        emit MilestoneRefunded(projectId, index, p.client, amount, RefundKind.DeadlineReclaim);
+        if (_yield[projectId].enabled) _vaultOut(projectId, amount);
+        token.safeTransfer(client, amount);
+        emit MilestoneRefunded(projectId, index, client, amount, RefundKind.DeadlineReclaim);
     }
 
     // ---------------------------------------------------------------------
@@ -509,6 +598,8 @@ contract EscrowFlow is ReentrancyGuard {
 
     /// @notice Either party freezes a milestone. Frozen funds move only via settlement,
     ///         arbiter ruling (if an arbiter was agreed), or the initiator withdrawing the dispute.
+    ///         The freelancer can only dispute work they actually submitted. Opening a dispute
+    ///         withdraws any pending cancellation proposal (the refundable set changed).
     function openDispute(uint256 projectId, uint256 index, bytes32 reasonHash) external {
         Project storage p = _project(projectId);
         _requireParty(p);
@@ -518,11 +609,15 @@ contract EscrowFlow is ReentrancyGuard {
         if (s != MilestoneStatus.Pending && s != MilestoneStatus.Submitted && s != MilestoneStatus.ChangesRequested) {
             revert InvalidMilestoneStatus(s);
         }
-        // Once an agreed auto-release has vested, the client cannot block it with a dispute.
-        if (
-            msg.sender == p.client && s == MilestoneStatus.Submitted && p.autoRelease
-                && block.timestamp >= uint256(m.submittedAt) + m.reviewPeriod
-        ) revert ReviewWindowElapsed();
+        if (msg.sender == p.client) {
+            // Once an agreed auto-release has vested, the client cannot block it with a dispute.
+            if (
+                s == MilestoneStatus.Submitted && p.autoRelease
+                    && block.timestamp >= uint256(m.submittedAt) + m.reviewPeriod
+            ) revert ReviewWindowElapsed();
+        } else if (m.revision == 0) {
+            revert NothingSubmitted();
+        }
 
         m.statusBeforeDispute = s;
         m.status = MilestoneStatus.Disputed;
@@ -531,6 +626,7 @@ contract EscrowFlow is ReentrancyGuard {
         m.settlementProposer = address(0);
         m.proposedFreelancerAmount = 0;
         p.openDisputes += 1;
+        _clearCancelProposal(p, projectId);
         emit DisputeOpened(projectId, index, msg.sender, reasonHash);
     }
 
@@ -572,8 +668,10 @@ contract EscrowFlow is ReentrancyGuard {
         _resolve(p, m, projectId, index, freelancerAmount, ResolutionKind.Arbiter);
     }
 
-    /// @notice The dispute initiator withdraws it; the milestone returns to its prior state with
-    ///         a fresh review window / grace period. Not available after a mutual cancellation.
+    /// @notice The dispute initiator withdraws it; the milestone returns to its prior state and
+    ///         every clock resumes where it paused: the review window / change-request grace are
+    ///         shifted by the disputed time and the reclaim deadline is extended by it. Withdraws
+    ///         any pending cancellation proposal. Not available after a mutual cancellation.
     function withdrawDispute(uint256 projectId, uint256 index) external {
         Project storage p = _project(projectId);
         Milestone storage m = _milestone(p, projectId, index);
@@ -581,18 +679,21 @@ contract EscrowFlow is ReentrancyGuard {
         if (msg.sender != m.disputeInitiator) revert NotDisputeInitiator();
         if (p.cancelled) revert DisputeLockedByCancellation();
 
+        uint64 paused = uint64(block.timestamp) - m.disputedAt;
+        m.pausedFor += paused;
         MilestoneStatus restored = m.statusBeforeDispute;
         m.status = restored;
         if (restored == MilestoneStatus.Submitted) {
-            m.submittedAt = uint64(block.timestamp);
+            m.submittedAt += paused;
         } else if (restored == MilestoneStatus.ChangesRequested) {
-            m.changesRequestedAt = uint64(block.timestamp);
+            m.changesRequestedAt += paused;
         }
         m.disputeInitiator = address(0);
         m.settlementProposer = address(0);
         m.proposedFreelancerAmount = 0;
         p.openDisputes -= 1;
-        emit DisputeWithdrawn(projectId, index, msg.sender);
+        _clearCancelProposal(p, projectId);
+        emit DisputeWithdrawn(projectId, index, msg.sender, paused);
     }
 
     // ---------------------------------------------------------------------
@@ -619,7 +720,8 @@ contract EscrowFlow is ReentrancyGuard {
     /// @notice Counterparty accepts cancellation: every unpaid, undisputed milestone
     ///         (Pending / Submitted / ChangesRequested) is refunded to the client. Released and
     ///         resolved funds are untouched; disputed milestones stay frozen until resolved.
-    function acceptCancellation(uint256 projectId) external nonReentrant {
+    /// @param expectedRefund The refund the caller agreed to; reverts RefundMismatch(actual) otherwise.
+    function acceptCancellation(uint256 projectId, uint128 expectedRefund) external nonReentrant {
         Project storage p = _project(projectId);
         _requireParty(p);
         _requireStatus(p, ProjectStatus.Active);
@@ -641,6 +743,7 @@ contract EscrowFlow is ReentrancyGuard {
                 emit MilestoneRefunded(projectId, i, client, amount, RefundKind.MutualCancellation);
             }
         }
+        if (refund != expectedRefund) revert RefundMismatch(refund);
 
         p.cancelled = true;
         p.cancelProposer = address(0);
@@ -649,7 +752,97 @@ contract EscrowFlow is ReentrancyGuard {
         emit ProjectCancelled(projectId, msg.sender, refund, true);
         _maybeClose(p, projectId);
 
-        if (refund > 0) token.safeTransfer(client, refund);
+        if (refund > 0) {
+            if (_yield[projectId].enabled) _vaultOut(projectId, refund);
+            token.safeTransfer(client, refund);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Savings yield
+    // ---------------------------------------------------------------------
+
+    /// @notice Pays this project's accrued savings yield to the parties using the agreed split
+    ///         (freelancerYieldBps to the freelancer, the rest to the client). Callable by either
+    ///         party in any project status, including after completion or cancellation.
+    function distributeYield(uint256 projectId) external nonReentrant {
+        Project storage p = _project(projectId);
+        _requireParty(p);
+        YieldState storage y = _yield[projectId];
+        if (!y.enabled) revert YieldNotEnabled();
+
+        _harvest();
+        _checkpoint(y);
+        uint128 amount = y.accrued;
+        if (amount == 0) revert NothingToDistribute();
+        y.accrued = 0;
+        y.paid += amount;
+
+        uint128 freelancerAmount = uint128((uint256(amount) * y.freelancerBps) / BPS);
+        uint128 clientAmount = amount - freelancerAmount;
+        address freelancer = p.freelancer;
+        address client = p.client;
+        if (freelancerAmount > 0) token.safeTransfer(freelancer, freelancerAmount);
+        if (clientAmount > 0) token.safeTransfer(client, clientAmount);
+        emit YieldDistributed(projectId, freelancer, freelancerAmount, client, clientAmount);
+    }
+
+    /// @dev Deposits a yield project's funded total into the vault. Yield that the vault credits
+    ///      during the deposit (protocol / strategy distribution) accrues to the escrow's
+    ///      PRE-deposit balance, so it is harvested before this project's principal is counted:
+    ///      a project never shares yield earned before it was funded.
+    function _vaultIn(uint256 projectId, YieldState storage y, uint128 amount) private {
+        ISavingsVault vault = savingsVault;
+        uint256 tokenBefore = token.balanceOf(address(this));
+        uint256 sharesBefore = vault.balanceOf(address(this));
+        token.forceApprove(address(vault), amount);
+        vault.deposit(amount);
+        if (
+            token.balanceOf(address(this)) + amount != tokenBefore
+                || vault.balanceOf(address(this)) != sharesBefore + amount
+        ) revert VaultMismatch();
+
+        _harvest();
+        _checkpoint(y);
+        y.principal += amount;
+        totalYieldPrincipal += amount;
+        emit SavingsDeposited(projectId, amount);
+    }
+
+    /// @dev Withdraws `amount` principal of a yield project from the vault. The vault pays the
+    ///      escrow's accrued yield first; it is credited while this principal is still counted.
+    function _vaultOut(uint256 projectId, uint128 amount) private {
+        YieldState storage y = _yield[projectId];
+        uint256 before = token.balanceOf(address(this));
+        savingsVault.withdraw(amount);
+        uint256 got = token.balanceOf(address(this)) - before;
+        if (got < amount) revert VaultShortfall();
+        _creditYield(got - amount);
+        _checkpoint(y);
+        y.principal -= amount;
+        totalYieldPrincipal -= amount;
+        emit SavingsWithdrawn(projectId, amount);
+    }
+
+    function _harvest() private {
+        uint256 before = token.balanceOf(address(this));
+        savingsVault.claimYield();
+        _creditYield(token.balanceOf(address(this)) - before);
+    }
+
+    function _creditYield(uint256 amount) private {
+        if (amount == 0) return;
+        uint256 principal = totalYieldPrincipal;
+        if (principal == 0) unattributedYield += amount;
+        else accYieldPerPrincipal += (amount * YIELD_PRECISION) / principal;
+        emit YieldHarvested(amount);
+    }
+
+    function _checkpoint(YieldState storage y) private {
+        uint256 acc = accYieldPerPrincipal;
+        uint256 principal = y.principal;
+        if (principal > 0) y.accrued += SafeCast.toUint128((principal * (acc - y.snapshot)) / YIELD_PRECISION);
+        y.snapshot = acc;
     }
 
     // ---------------------------------------------------------------------
@@ -667,7 +860,8 @@ contract EscrowFlow is ReentrancyGuard {
         p.releasedAmount += amount;
         totalHeld -= amount;
         _maybeClose(p, projectId);
-        // Interaction
+        // Interactions
+        if (_yield[projectId].enabled) _vaultOut(projectId, amount);
         token.safeTransfer(freelancer, amount);
         emit MilestoneReleased(projectId, index, freelancer, amount, kind);
     }
@@ -680,7 +874,8 @@ contract EscrowFlow is ReentrancyGuard {
         uint128 freelancerAmount,
         ResolutionKind kind
     ) private {
-        uint128 clientAmount = m.amount - freelancerAmount;
+        uint128 amount = m.amount;
+        uint128 clientAmount = amount - freelancerAmount;
         address freelancer = p.freelancer;
         address client = p.client;
         // Effects
@@ -692,9 +887,10 @@ contract EscrowFlow is ReentrancyGuard {
         p.releasedAmount += freelancerAmount;
         p.refundedAmount += clientAmount;
         p.openDisputes -= 1;
-        totalHeld -= m.amount;
+        totalHeld -= amount;
         _maybeClose(p, projectId);
         // Interactions
+        if (_yield[projectId].enabled) _vaultOut(projectId, amount);
         if (freelancerAmount > 0) token.safeTransfer(freelancer, freelancerAmount);
         if (clientAmount > 0) token.safeTransfer(client, clientAmount);
         emit DisputeResolved(projectId, index, msg.sender, freelancerAmount, clientAmount, kind);
@@ -704,13 +900,20 @@ contract EscrowFlow is ReentrancyGuard {
         if (p.releasedAmount + p.refundedAmount == p.fundedAmount) {
             ProjectStatus finalStatus = p.cancelled ? ProjectStatus.Cancelled : ProjectStatus.Completed;
             p.status = finalStatus;
-            p.cancelProposer = address(0);
+            _clearCancelProposal(p, projectId);
             emit ProjectClosed(projectId, finalStatus);
         }
     }
 
+    function _clearCancelProposal(Project storage p, uint256 projectId) private {
+        if (p.cancelProposer != address(0)) {
+            p.cancelProposer = address(0);
+            emit CancellationRevoked(projectId, msg.sender);
+        }
+    }
+
     function _reclaimAvailableAt(Project storage p, Milestone storage m) private view returns (uint64) {
-        uint64 availableAt = m.deadline + p.reclaimGracePeriod;
+        uint64 availableAt = m.deadline + m.pausedFor + p.reclaimGracePeriod;
         if (m.status == MilestoneStatus.ChangesRequested) {
             uint64 afterChanges = m.changesRequestedAt + p.reclaimGracePeriod;
             if (afterChanges > availableAt) availableAt = afterChanges;
@@ -721,17 +924,28 @@ contract EscrowFlow is ReentrancyGuard {
     function _validateParams(ProjectParams calldata params, address client) private view returns (uint128) {
         address freelancer = params.freelancer;
         address arbiter = params.arbiter;
+        address vault = address(savingsVault);
         if (freelancer == address(0)) revert ZeroAddress();
         if (
             freelancer == client || freelancer == address(this) || freelancer == address(token)
-                || arbiter == client || arbiter == freelancer || arbiter == address(this)
+                || arbiter == client || arbiter == freelancer || arbiter == address(this) || arbiter == address(token)
+                || (arbiter == vault && vault != address(0))
         ) revert InvalidParty();
         if (params.termsHash == bytes32(0)) revert EmptyTermsHash();
 
         uint256 n = params.amounts.length;
         if (n == 0 || n > MAX_MILESTONES) revert InvalidMilestoneCount();
         if (params.deadlines.length != n || params.reviewPeriods.length != n) revert LengthMismatch();
-        if (params.reclaimGracePeriod > MAX_RECLAIM_GRACE) revert InvalidGracePeriod();
+        uint32 grace = params.reclaimGracePeriod;
+        if (grace > MAX_RECLAIM_GRACE || (params.deadlineReclaim && grace < MIN_RECLAIM_GRACE)) {
+            revert InvalidGracePeriod();
+        }
+        if (params.yieldEnabled) {
+            if (vault == address(0)) revert YieldUnavailable();
+            if (params.freelancerYieldBps > BPS) revert InvalidYieldSplit();
+        } else if (params.freelancerYieldBps != 0) {
+            revert InvalidYieldSplit();
+        }
 
         uint256 total;
         uint256 horizon = block.timestamp + MAX_DEADLINE_HORIZON;
@@ -771,6 +985,9 @@ contract EscrowFlow is ReentrancyGuard {
             m.deadline = params.deadlines[i];
             m.reviewPeriod = params.reviewPeriods[i];
         }
+        YieldState storage y = _yield[projectId];
+        y.enabled = params.yieldEnabled;
+        y.freelancerBps = params.freelancerYieldBps;
     }
 
     function _indexFreelancer(uint256 projectId, address freelancer) private {
@@ -793,6 +1010,8 @@ contract EscrowFlow is ReentrancyGuard {
             p.deadlineReclaim,
             p.reclaimGracePeriod
         );
+        YieldState storage y = _yield[projectId];
+        emit YieldTermsSet(projectId, p.termsVersion, y.enabled, y.freelancerBps);
     }
 
     // ---------------------------------------------------------------------
@@ -823,6 +1042,27 @@ contract EscrowFlow is ReentrancyGuard {
         return p.fundedAmount - p.releasedAmount - p.refundedAmount;
     }
 
+    /// @notice Savings terms and yield accounting of a project. `accrued` is an estimate that
+    ///         includes this project's share of yield the vault has credited but the escrow has
+    ///         not harvested yet; distributeYield pays at least that much.
+    function getYield(uint256 projectId) external view returns (YieldView memory v) {
+        _project(projectId);
+        YieldState storage y = _yield[projectId];
+        v.enabled = y.enabled;
+        v.freelancerBps = y.freelancerBps;
+        v.principal = y.principal;
+        v.paid = y.paid;
+        uint256 accrued = y.accrued;
+        if (y.principal > 0) {
+            ISavingsVault vault = savingsVault;
+            uint256 pending = vault.claimableYield(address(this))
+                + (vault.balanceOf(address(this)) * (vault.yieldIndex() - vault.supplyYieldIndex(address(this)))) / 1e18;
+            uint256 acc = accYieldPerPrincipal + (pending * YIELD_PRECISION) / totalYieldPrincipal;
+            accrued += (uint256(y.principal) * (acc - y.snapshot)) / YIELD_PRECISION;
+        }
+        v.accrued = SafeCast.toUint128(accrued);
+    }
+
     function projectsOfClient(address client) external view returns (uint256[] memory) {
         return _clientProjects[client];
     }
@@ -833,6 +1073,7 @@ contract EscrowFlow is ReentrancyGuard {
     }
 
     /// @notice Timestamp after which the freelancer may claim (0 if not currently submitted).
+    ///         Already shifted by any withdrawn-dispute pause.
     function reviewDeadline(uint256 projectId, uint256 index) external view returns (uint64) {
         Project storage p = _project(projectId);
         Milestone storage m = _milestone(p, projectId, index);
@@ -841,6 +1082,7 @@ contract EscrowFlow is ReentrancyGuard {
     }
 
     /// @notice Timestamp after which the client may reclaim (0 if reclaim is not applicable).
+    ///         Includes the milestone's dispute pauses (deadline + pausedFor + grace).
     function reclaimAvailableAt(uint256 projectId, uint256 index) external view returns (uint64) {
         Project storage p = _project(projectId);
         Milestone storage m = _milestone(p, projectId, index);

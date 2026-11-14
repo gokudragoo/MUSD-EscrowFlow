@@ -25,8 +25,10 @@ interface Row {
   project_id: string | null;
 }
 
+/** Quotes a CSV cell and neutralises spreadsheet formulas (=, +, -, @, tab, CR) in user-written text. */
 function csvCell(v: string) {
-  return `"${v.replace(/"/g, '""')}"`;
+  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 /** Funding, releases, refunds and settlements for the signed-in wallet's escrows (on-chain facts). */

@@ -27,7 +27,7 @@ export function Dialog({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink-950/70 backdrop-blur-[3px] data-[state=open]:animate-in" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink-950/80" />
         <DialogPrimitive.Content
           className={cn(
             "panel-raised fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[calc(100vw-32px)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto p-0 focus:outline-none",
@@ -70,7 +70,7 @@ export function TabsTrigger({ value, children, count }: { value: string; childre
   return (
     <TabsPrimitive.Trigger
       value={value}
-      className="relative -mb-px flex shrink-0 items-center gap-2 border-b-2 border-transparent px-3 py-2.5 text-[13.5px] font-medium text-mist-400 transition-colors hover:text-mist-100 data-[state=active]:border-signal-400 data-[state=active]:text-white"
+      className="relative -mb-px flex shrink-0 items-center gap-2 border-b-2 border-transparent px-3 py-2.5 text-[13.5px] font-medium text-mist-400 transition-colors hover:text-mist-100 data-[state=active]:border-signal-500 data-[state=active]:text-white"
     >
       {children}
       {count !== undefined && count > 0 && <span className="rounded-full bg-ink-700 px-1.5 text-[11px] text-mist-300">{count}</span>}

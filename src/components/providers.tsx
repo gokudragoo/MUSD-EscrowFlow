@@ -27,7 +27,7 @@ export function Providers({ children, cookie }: { children: ReactNode; cookie?: 
               classNames: {
                 toast: "!bg-ink-800 !border !border-ink-600 !text-mist-100 !rounded-[12px]",
                 description: "!text-mist-300",
-                actionButton: "!bg-signal-500 !text-white",
+                actionButton: "!bg-signal-500 !text-ink-950",
               },
             }}
           />

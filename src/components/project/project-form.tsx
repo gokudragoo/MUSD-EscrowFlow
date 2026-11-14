@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAccount } from "wagmi";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Divide, Plus, Trash2, Info, LayoutTemplate } from "lucide-react";
+import { ArrowDown, ArrowUp, Divide, Plus, Trash2, Info, LayoutTemplate, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Notice, Panel, PanelHeader, Select, Textarea } from "@/components/ui/primitives";
 import { HashText } from "@/components/ui/chain";
@@ -38,7 +38,10 @@ interface FormState {
   milestones: MilestoneForm[];
   autoRelease: boolean;
   deadlineReclaim: boolean;
-  graceDays: string;
+  graceSeconds: number;
+  savings: boolean;
+  /** Freelancer's share of the sMUSD yield, in percent. */
+  savingsShare: number;
   arbiter: string;
   cancellationTerms: string;
   disputeTerms: string;
@@ -54,6 +57,18 @@ const REVIEW_OPTIONS = [
   { label: "7 days", value: 7 * 86_400 },
   { label: "14 days", value: 14 * 86_400 },
 ];
+
+const GRACE_OPTIONS = [
+  { label: "10 minutes (testnet demo)", value: 600 },
+  { label: "1 day", value: 86_400 },
+  { label: "2 days", value: 2 * 86_400 },
+  { label: "3 days", value: 3 * 86_400 },
+  { label: "5 days", value: 5 * 86_400 },
+  { label: "7 days", value: 7 * 86_400 },
+  { label: "14 days", value: 14 * 86_400 },
+];
+
+const SHARE_OPTIONS = [0, 25, 50, 75, 100];
 
 const DEFAULT_CANCEL =
   "Before funding, the client may cancel at no cost. After funding, either party may propose cancellation; if the other accepts, every unpaid and undisputed milestone is refunded to the client. Released payments are never reversed.";
@@ -126,7 +141,9 @@ export function initialFormFromDraft(d?: DraftInput): FormState {
       milestones: [blankMilestone(0), blankMilestone(1)],
       autoRelease: true,
       deadlineReclaim: true,
-      graceDays: "3",
+      graceSeconds: 3 * 86_400,
+      savings: true,
+      savingsShare: 50,
       arbiter: "",
       cancellationTerms: DEFAULT_CANCEL,
       disputeTerms: DEFAULT_DISPUTE,
@@ -154,7 +171,9 @@ export function initialFormFromDraft(d?: DraftInput): FormState {
     })),
     autoRelease: d.rules.autoRelease,
     deadlineReclaim: d.rules.deadlineReclaim,
-    graceDays: String(Math.round((d.rules.reclaimGracePeriodSeconds / 86_400) * 100) / 100),
+    graceSeconds: d.rules.reclaimGracePeriodSeconds || 3 * 86_400,
+    savings: !!d.rules.savings?.enabled,
+    savingsShare: d.rules.savings?.enabled ? d.rules.savings.freelancerShareBps / 100 : 50,
     arbiter: d.rules.arbiter ?? "",
     cancellationTerms: d.rules.cancellationTerms,
     disputeTerms: d.rules.disputeTerms,
@@ -187,10 +206,11 @@ function toDraftInput(f: FormState): unknown {
     rules: {
       autoRelease: f.autoRelease,
       deadlineReclaim: f.deadlineReclaim,
-      reclaimGracePeriodSeconds: f.deadlineReclaim ? Math.round(Number(f.graceDays || "0") * 86_400) : 0,
+      reclaimGracePeriodSeconds: f.deadlineReclaim ? f.graceSeconds : 0,
       arbiter: f.arbiter.trim() || null,
       cancellationTerms: f.cancellationTerms,
       disputeTerms: f.disputeTerms,
+      savings: { enabled: f.savings, freelancerShareBps: Math.round(f.savingsShare * 100) },
     },
     references: lines(f.references),
   };
@@ -393,7 +413,7 @@ export function ProjectForm({ mode, projectId, initial, lockHiring }: { mode: "c
 
             <ol className="space-y-3">
               {f.milestones.map((m, i) => (
-                <li key={i} className="rounded-[12px] border border-ink-600 bg-ink-900/50">
+                <li key={i} className="rounded-[10px] border border-ink-600 bg-ink-900/50">
                   <div className="flex items-center gap-2 border-b border-ink-700 px-4 py-2.5">
                     <span className="amount grid size-6 place-items-center rounded-full bg-held-500/20 text-[12px] font-semibold text-held-300">{i + 1}</span>
                     <span className="text-[13.5px] font-medium text-white">{m.title || `Milestone ${i + 1}`}</span>
@@ -455,9 +475,20 @@ export function ProjectForm({ mode, projectId, initial, lockHiring }: { mode: "c
                 </li>
               ))}
             </ol>
-            <Button type="button" variant="secondary" size="sm" disabled={f.milestones.length >= 20} onClick={() => setF((p) => ({ ...p, milestones: [...p.milestones, blankMilestone(p.milestones.length)] }))}>
-              <Plus className="size-4" aria-hidden /> Add milestone
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" size="sm" disabled={f.milestones.length >= 20} onClick={() => setF((p) => ({ ...p, milestones: [...p.milestones, blankMilestone(p.milestones.length)] }))}>
+                <Plus className="size-4" aria-hidden /> Add milestone
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                title="Sets every review period and the reclaim grace to 10 minutes so the timeout paths can be shown live on testnet"
+                onClick={() => setF((p) => ({ ...p, graceSeconds: 600, milestones: p.milestones.map((m) => ({ ...m, reviewPeriodSeconds: 600 })) }))}
+              >
+                <Timer className="size-4" aria-hidden /> Use testnet demo timing
+              </Button>
+            </div>
           </div>
         </Panel>
 
@@ -474,12 +505,38 @@ export function ProjectForm({ mode, projectId, initial, lockHiring }: { mode: "c
               checked={f.deadlineReclaim}
               onChange={(v) => set("deadlineReclaim", v)}
               title="Deadline reclaim"
-              description="If a milestone has no live submission by its deadline plus a grace period, the client can reclaim that milestone's funds. Submitted, disputed or paid work can never be reclaimed."
+              description="The client can reclaim a milestone that was never delivered by its deadline plus a grace period, or that was sent back for changes and not resubmitted within the grace period. Work awaiting review, disputed or paid can never be reclaimed."
             >
               {f.deadlineReclaim && (
-                <div className="mt-3 max-w-[200px]">
-                  <Field label="Grace period (days)" htmlFor="grace" error={err("rules.reclaimGracePeriodSeconds")}>
-                    <Input id="grace" inputMode="decimal" value={f.graceDays} onChange={(e) => set("graceDays", e.target.value)} />
+                <div className="mt-3 max-w-[240px]">
+                  <Field label="Grace period" htmlFor="grace" error={err("rules.reclaimGracePeriodSeconds")} hint="Extra time after each deadline (and after a change request) before reclaim opens.">
+                    <Select id="grace" value={f.graceSeconds} onChange={(e) => set("graceSeconds", Number(e.target.value))}>
+                      {[...GRACE_OPTIONS, ...(GRACE_OPTIONS.some((o) => o.value === f.graceSeconds) ? [] : [{ label: formatDuration(f.graceSeconds), value: f.graceSeconds }])].map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+              )}
+            </Toggle>
+            <Toggle
+              checked={f.savings}
+              onChange={(v) => set("savings", v)}
+              title="Earn the MUSD savings rate while funds are held"
+              description="The escrow deposits the budget 1:1 into Mezo's sMUSD vault (MUSDSavingsRate) and withdraws exactly what each payout or refund needs. The yield is split as agreed. The vault is run by the Mezo protocol; if it ever stopped paying out, payouts from this escrow would wait for it."
+            >
+              {f.savings && (
+                <div className="mt-3 max-w-[260px]">
+                  <Field label="Freelancer's share of the yield" htmlFor="share" hint="The client receives the rest.">
+                    <Select id="share" value={f.savingsShare} onChange={(e) => set("savingsShare", Number(e.target.value))}>
+                      {SHARE_OPTIONS.map((v) => (
+                        <option key={v} value={v}>
+                          {v}% to the freelancer
+                        </option>
+                      ))}
+                    </Select>
                   </Field>
                 </div>
               )}
@@ -527,7 +584,11 @@ export function ProjectForm({ mode, projectId, initial, lockHiring }: { mode: "c
               </div>
               <div className="flex justify-between">
                 <dt>Deadline reclaim</dt>
-                <dd className="text-mist-100">{f.deadlineReclaim ? `Yes, +${formatDuration(Math.round(Number(f.graceDays || 0) * 86_400))}` : "No"}</dd>
+                <dd className="text-mist-100">{f.deadlineReclaim ? `Yes, +${formatDuration(f.graceSeconds)}` : "No"}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>sMUSD savings</dt>
+                <dd className="text-mist-100">{f.savings ? `On, ${f.savingsShare}% to freelancer` : "Off"}</dd>
               </div>
               <div className="flex justify-between">
                 <dt>Arbiter</dt>
@@ -538,7 +599,7 @@ export function ProjectForm({ mode, projectId, initial, lockHiring }: { mode: "c
                 <dd className="text-mist-100">None</dd>
               </div>
             </dl>
-            <div className="rounded-[10px] border border-ink-700 bg-ink-900/60 p-3 text-[12.5px] text-mist-400">
+            <div className="rounded-[8px] border border-ink-700 bg-ink-900/60 p-3 text-[12.5px] text-mist-400">
               <div className="flex items-center gap-1.5 text-mist-300">
                 <Info className="size-3.5" aria-hidden /> Terms hash
               </div>
@@ -590,9 +651,9 @@ function Toggle({ checked, onChange, title, description, children }: { checked: 
         aria-checked={checked}
         aria-label={title}
         onClick={() => onChange(!checked)}
-        className={cn("relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors", checked ? "border-signal-400 bg-signal-500" : "border-ink-500 bg-ink-700")}
+        className={cn("relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition-colors", checked ? "border-signal-500 bg-signal-500" : "border-ink-500 bg-ink-700")}
       >
-        <span className={cn("absolute top-0.5 size-[18px] rounded-full bg-white transition-transform", checked ? "translate-x-[22px]" : "translate-x-0.5")} />
+        <span className={cn("absolute top-0.5 size-[18px] rounded-full transition-transform", checked ? "translate-x-[22px] bg-ink-950" : "translate-x-0.5 bg-mist-300")} />
       </button>
       <div className="min-w-0">
         <div className="text-[14px] font-medium text-white">{title}</div>

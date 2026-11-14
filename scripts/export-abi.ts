@@ -7,7 +7,17 @@ import path from "node:path";
 
 const root = path.resolve(__dirname, "..");
 const artifactPath = path.join(root, "contracts", "artifacts", "contracts", "EscrowFlow.sol", "EscrowFlow.json");
-const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { abi: unknown[]; bytecode: string };
+const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as {
+  abi: { type: string; inputs?: unknown[] }[];
+  bytecode: string;
+  deployedBytecode: string;
+};
+
+// Guard rails: refuse to export a runtime the chain would reject (EIP-170) or a stale v1 artifact.
+const runtimeBytes = (artifact.deployedBytecode.length - 2) / 2;
+if (runtimeBytes > 24_576) throw new Error(`EscrowFlow runtime is ${runtimeBytes} bytes (> 24576, EIP-170)`);
+const ctor = artifact.abi.find((e) => e.type === "constructor");
+if (!ctor || ctor.inputs?.length !== 3) throw new Error("Expected the v2 constructor(token, savingsVault, idOffset)");
 
 const outDir = path.join(root, "src", "config", "abi");
 mkdirSync(outDir, { recursive: true });
@@ -22,4 +32,6 @@ writeFileSync(
   path.join(root, "scripts", "build", "EscrowFlow.bytecode.json"),
   JSON.stringify({ bytecode: artifact.bytecode }),
 );
-console.log(`Exported ABI (${artifact.abi.length} entries) and bytecode (${(artifact.bytecode.length - 2) / 2} bytes).`);
+console.log(
+  `Exported ABI (${artifact.abi.length} entries) and bytecode (${(artifact.bytecode.length - 2) / 2} bytes init, ${runtimeBytes} bytes runtime).`,
+);

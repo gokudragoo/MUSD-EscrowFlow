@@ -64,6 +64,35 @@ export interface ChainMilestone {
   submissionHash: Hex;
   releasedAmount: bigint;
   refundedAmount: bigint;
+  /** v2: seconds the milestone spent disputed (withdrawn disputes). Shifts its clocks; 0 on v1. */
+  pausedFor: bigint;
+}
+
+/** v2 opt-in sMUSD savings: principal parked in Mezo's MUSDSavingsRate vault while held. */
+export interface ChainYield {
+  enabled: boolean;
+  /** Share of the yield paid to the freelancer, in basis points (the rest goes to the client). */
+  freelancerBps: number;
+  /** MUSD currently deposited in sMUSD for this project (equals the held amount when enabled). */
+  principal: bigint;
+  /** Yield attributed to this project and not yet distributed (includes the vault's pending yield). */
+  accrued: bigint;
+  /** Yield already distributed to the parties. */
+  paid: bigint;
+}
+
+/**
+ * The savings terms to check a document against: v2 escrows always report them (off when unused);
+ * v1 escrows have no savings option, so a document that promises savings can never match one.
+ */
+export function chainSavingsTerms(c: { version: 1 | 2; yield: ChainYield | null }): { enabled: boolean; freelancerBps: number } | null {
+  return c.version === 2 ? (c.yield ?? { enabled: false, freelancerBps: 0 }) : null;
+}
+
+/** Splits an amount of yield by the agreed basis points (freelancer share rounds down, like the contract). */
+export function splitYield(amount: bigint, freelancerBps: number): { freelancer: bigint; client: bigint } {
+  const freelancer = (amount * BigInt(freelancerBps)) / 10_000n;
+  return { freelancer, client: amount - freelancer };
 }
 
 export const ZERO = "0x0000000000000000000000000000000000000000";
@@ -239,11 +268,16 @@ export function reviewDeadlineOf(m: Pick<ChainMilestone, "submittedAt" | "review
   return Number(m.submittedAt) + Number(m.reviewPeriod);
 }
 
+/** The milestone deadline after any time spent disputed (v2 pauses the clock during disputes). */
+export function effectiveDeadline(m: Pick<ChainMilestone, "deadline"> & { pausedFor?: bigint }): number {
+  return Number(m.deadline) + Number(m.pausedFor ?? 0n);
+}
+
 export function reclaimAvailableAt(
   p: Pick<ChainProject, "reclaimGracePeriod">,
-  m: Pick<ChainMilestone, "deadline" | "status" | "changesRequestedAt">,
+  m: Pick<ChainMilestone, "deadline" | "status" | "changesRequestedAt"> & { pausedFor?: bigint },
 ): number {
-  let at = Number(m.deadline) + Number(p.reclaimGracePeriod);
+  let at = effectiveDeadline(m) + Number(p.reclaimGracePeriod);
   if (m.status === MilestoneStatus.ChangesRequested) {
     at = Math.max(at, Number(m.changesRequestedAt) + Number(p.reclaimGracePeriod));
   }
@@ -323,7 +357,9 @@ export function milestoneActions(p: ChainProject, m: ChainMilestone, who: string
       ? no("The escrow is not active")
       : s !== MilestoneStatus.Pending && s !== MilestoneStatus.Submitted && s !== MilestoneStatus.ChangesRequested
         ? no("This milestone cannot be disputed")
-        : role === "client" && p.autoRelease && windowElapsed
+        : role === "freelancer" && m.revision === 0
+          ? no("Submit work before opening a dispute on this milestone")
+          : role === "client" && p.autoRelease && windowElapsed
           ? no("The agreed review period has ended")
           : yes;
 
@@ -416,9 +452,9 @@ export function cancellationRefundPreview(ms: readonly ChainMilestone[]): { refu
 export type DeadlineState = "none" | "upcoming" | "due_soon" | "overdue";
 
 /** Warning level for a milestone deadline (only for milestones still awaiting delivery). */
-export function deadlineState(m: Pick<ChainMilestone, "deadline" | "status">, now: number, soonSeconds = 2 * 86_400): DeadlineState {
+export function deadlineState(m: Pick<ChainMilestone, "deadline" | "status"> & { pausedFor?: bigint }, now: number, soonSeconds = 2 * 86_400): DeadlineState {
   if (m.status !== MilestoneStatus.Pending && m.status !== MilestoneStatus.ChangesRequested) return "none";
-  const d = Number(m.deadline);
+  const d = effectiveDeadline(m);
   if (now > d) return "overdue";
   if (d - now <= soonSeconds) return "due_soon";
   return "upcoming";
